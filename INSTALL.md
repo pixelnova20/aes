@@ -9,14 +9,14 @@
 
 | 项目 | 默认值 |
 | --- | --- |
-| 安装目录 | `/opt/aes` |
-| systemd 运行账户 | `aes` |
+| 安装目录 | `~/aes` |
+| systemd 运行账户 | 执行安装的普通用户 |
 | 外部 HTTP 端口 | `10001` |
 | Courseworks 后端 | `127.0.0.1:3000` |
 | MySQL 数据库 | `vibeos_agent` |
 | MySQL 用户 | `vibeos_user` |
 
-安装脚本需要 root 权限。它不会通过 `apt` 安装或升级系统软件，也不会自动配置域名、TLS 证书或外部防火墙。
+安装脚本需要通过 `sudo` 获得系统配置权限，但仓库、依赖、构建结果和业务数据仍归发起 `sudo` 的普通用户所有。systemd 业务服务也以该用户身份运行。脚本不会通过 `apt` 安装或升级系统软件，也不会自动配置域名、TLS 证书或外部防火墙。
 
 ## 1. 服务器要求
 
@@ -65,11 +65,11 @@ sudo docker version
 将仓库克隆到默认目录：
 
 ```bash
-sudo git clone https://github.com/pixelnova20/aes.git /opt/aes
-cd /opt/aes
+git clone https://github.com/pixelnova20/aes.git "$HOME/aes"
+cd "$HOME/aes"
 ```
 
-确认服务器上没有需要保留的同名目录。首次安装只需执行：
+确认服务器上没有需要保留的同名目录。**不要使用 `sudo git clone`，也不要使用 `sudo git pull`**；仓库必须始终由当前普通用户拥有。首次安装只需执行：
 
 ```bash
 sudo ./install_script.sh
@@ -83,7 +83,7 @@ sudo ./install_script.sh
 
 密码输入不会显示在终端中。脚本随后会自动完成：
 
-1. 创建 `aes` 系统账户并授予 Docker 使用权限；
+1. 将执行安装的普通用户加入 Docker 组，并保持仓库归该用户所有；
 2. 限制 `superuser.toml` 和 `courseworks/.env` 的文件权限；
 3. 自动生成 MySQL 密码、JWT 密钥和两个 Flask 会话密钥；
 4. 创建 `vibeos_agent` 数据库及 `vibeos_user`；
@@ -93,9 +93,9 @@ sudo ./install_script.sh
 8. 初始化模型目录和超级用户；
 9. 建立受限 Docker 网络及相应 iptables 规则；
 10. 安装并启动 Courseworks、Homeworks、Slideshow systemd 服务；
-11. 安装 Nginx 统一入口并检查三个 HTTP 入口。
+11. 将前端静态文件发布到 `/var/lib/aes/www`，安装 Nginx 统一入口并检查三个 HTTP 入口。
 
-首次构建 toolbox 镜像需要下载较多软件包，运行时间可能较长。脚本遇到错误会立即停止；修复错误后可以再次执行同一命令。已有的 `courseworks/.env` 和非示例 `superuser.toml` 不会被重新生成。
+首次构建 toolbox 镜像需要下载较多软件包，运行时间可能较长。脚本遇到错误会立即停止；修复错误后可以再次执行同一命令。已有的 `courseworks/.env` 和非示例 `superuser.toml` 不会被重新生成。脚本会将当前普通用户加入 `docker` 组；安装脚本可立即使用该组权限，但用户若要在当前终端直接执行 `docker`，通常需要注销并重新登录。
 
 ### 使用其他端口
 
@@ -177,18 +177,20 @@ http://SERVER_IP:10001/
 
 | 路径 | 内容 |
 | --- | --- |
-| `/opt/aes/superuser.toml` | 超级用户邮箱、明文密码和全局资源上限 |
-| `/opt/aes/courseworks/.env` | 数据库、会话密钥、资源和网络配置 |
-| `/opt/aes/accounts-data/` | Homeworks、Slideshow 的 SQLite 数据 |
-| `/opt/aes/homeworks/uploads/` | 题库和学生附件 |
-| `/opt/aes/slideshow/uploads/` | 原始 PPT 和转换结果 |
-| `/opt/aes/courseworks/student-workspace/` | Courseworks 持久化工作区 |
-| `/opt/aes/archive-data/` | 删除操作产生的归档 |
+| `~/aes/superuser.toml` | 超级用户邮箱、明文密码和全局资源上限 |
+| `~/aes/courseworks/.env` | 数据库、会话密钥、资源和网络配置 |
+| `~/aes/accounts-data/` | Homeworks、Slideshow 的 SQLite 数据 |
+| `~/aes/homeworks/uploads/` | 题库和学生附件 |
+| `~/aes/slideshow/uploads/` | 原始 PPT 和转换结果 |
+| `~/aes/courseworks/student-workspace/` | Courseworks 持久化工作区 |
+| `~/aes/archive-data/` | 删除操作产生的归档 |
+| `/var/lib/aes/home/` | 服务运行时使用的独立 HOME 和缓存目录 |
+| `/var/lib/aes/www/` | 供 Nginx 读取的前端静态文件副本 |
 
 脚本从默认路由自动识别 `DOCKER_DIRECT_IFACE`。若服务器有多张网卡、VPN 或策略路由，请检查：
 
 ```bash
-grep '^DOCKER_DIRECT_IFACE=' /opt/aes/courseworks/.env
+grep '^DOCKER_DIRECT_IFACE=' "$HOME/aes/courseworks/.env"
 ip route show default
 ```
 
@@ -266,19 +268,19 @@ sudo systemctl stop courseworks-backend homework slideshow
 修复文件权限并应用当前版本 migration：
 
 ```bash
-sudo chown -R aes:aes \
-  /opt/aes/accounts-data \
-  /opt/aes/homeworks/uploads \
-  /opt/aes/slideshow/uploads \
-  /opt/aes/courseworks/student-workspace \
-  /opt/aes/archive-data
-sudo chmod 600 /opt/aes/courseworks/.env /opt/aes/superuser.toml
+sudo chown -R "$USER:$(id -gn)" \
+  "$HOME/aes/accounts-data" \
+  "$HOME/aes/homeworks/uploads" \
+  "$HOME/aes/slideshow/uploads" \
+  "$HOME/aes/courseworks/student-workspace" \
+  "$HOME/aes/archive-data"
+sudo chown "$USER:$(id -gn)" \
+  "$HOME/aes/courseworks/.env" \
+  "$HOME/aes/superuser.toml"
+chmod 600 "$HOME/aes/courseworks/.env" "$HOME/aes/superuser.toml"
 
-cd /opt/aes/courseworks
-sudo -u aes -H env PATH="/opt/aes/.venv/bin:$PATH" npm run prisma:generate
-sudo -u aes -H env PATH="/opt/aes/.venv/bin:$PATH" npm run prisma:deploy
-sudo -u aes -H env PATH="/opt/aes/.venv/bin:$PATH" npm run build
-sudo systemctl start courseworks-backend homework slideshow
+cd "$HOME/aes"
+sudo ./install_script.sh
 ```
 
 如果目标机路径、数据库密码或网卡名不同，必须先调整恢复后的 `.env`。不要只复制 SQLite 或只导入 MySQL，否则统一账户、班级、作业和课件会不一致。
@@ -297,8 +299,8 @@ sudo tail -f /var/log/nginx/error.log
 代码升级前先备份数据库、上传文件和工作区，并安排维护窗口。然后执行：
 
 ```bash
-cd /opt/aes
-sudo -u aes git pull --ff-only
+cd "$HOME/aes"
+git pull --ff-only
 sudo ./install_script.sh
 ```
 
@@ -309,6 +311,19 @@ sudo ./install_script.sh
 ### 安装脚本提示缺少命令
 
 重新执行“准备 Ubuntu 环境”中的 apt 和 Node.js 安装命令。脚本不会自动修改系统软件源或安装 apt 软件包。
+
+### Git 提示 dubious ownership
+
+这通常表示仓库曾通过 `sudo git clone` 创建，或安装脚本把整个仓库改成了其他用户所有。不要通过添加 `safe.directory` 掩盖所有权问题，也不要继续使用 `sudo git pull`。推荐保留旧目录供核对，在普通用户 HOME 下重新克隆：
+
+```bash
+cd "$HOME"
+git clone https://github.com/pixelnova20/aes.git aes
+cd "$HOME/aes"
+sudo ./install_script.sh
+```
+
+新安装脚本会在修改系统前检查仓库所有者，并且不会再递归修改仓库所有权。
 
 ### 服务启动失败
 
@@ -335,8 +350,8 @@ sudo journalctl -u courseworks-backend -n 200 --no-pager
 检查 Docker、运行账户的用户组、Nginx WebSocket 配置和受限网络服务：
 
 ```bash
-id aes
-sudo -u aes docker ps
+id "$USER"
+sudo docker ps
 sudo systemctl status courseworks-network --no-pager
 sudo nginx -T | grep -n 'workspace/lab'
 ```
@@ -346,7 +361,7 @@ sudo nginx -T | grep -n 'workspace/lab'
 ```bash
 command -v libreoffice pdftoppm
 sudo journalctl -u slideshow -n 200 --no-pager
-sudo -u aes test -w /opt/aes/slideshow/uploads
+test -w "$HOME/aes/slideshow/uploads"
 ```
 
 ### AI 请求超时
@@ -356,10 +371,10 @@ sudo -u aes test -w /opt/aes/slideshow/uploads
 ### 数据目录权限错误
 
 ```bash
-sudo chown -R aes:aes \
-  /opt/aes/accounts-data \
-  /opt/aes/homeworks/uploads \
-  /opt/aes/slideshow/uploads \
-  /opt/aes/courseworks/student-workspace \
-  /opt/aes/archive-data
+sudo chown -R "$USER:$(id -gn)" \
+  "$HOME/aes/accounts-data" \
+  "$HOME/aes/homeworks/uploads" \
+  "$HOME/aes/slideshow/uploads" \
+  "$HOME/aes/courseworks/student-workspace" \
+  "$HOME/aes/archive-data"
 ```

@@ -4,8 +4,10 @@ set -Eeuo pipefail
 umask 027
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-SERVICE_USER="aes"
-SERVICE_HOME="/var/lib/aes"
+SERVICE_USER="${SUDO_USER:-}"
+SERVICE_GROUP=""
+SERVICE_HOME="/var/lib/aes/home"
+WEB_ROOT="/var/lib/aes/www"
 HTTP_PORT="${AES_HTTP_PORT:-}"
 ENV_FILE="$ROOT/courseworks/.env"
 VENV="$ROOT/.venv"
@@ -14,7 +16,8 @@ usage() {
   cat <<'EOF'
 Usage: sudo ./install_script.sh [--port PORT]
 
-The script installs AES from the current repository directory. Before running
+Clone AES as your normal user under your home directory, then run this script
+through sudo. The repository remains owned by that normal user. Before running
 it, install the Ubuntu packages listed in INSTALL.md and Node.js 22 or newer.
 
 Environment override:
@@ -61,17 +64,27 @@ fi
 HTTP_PORT="${HTTP_PORT:-10001}"
 
 [[ "$EUID" -eq 0 ]] || die "Run this script with sudo."
+[[ -n "$SERVICE_USER" && "$SERVICE_USER" != "root" ]] \
+  || die "Run this script as a normal user through sudo; do not run it from a root login."
+getent passwd "$SERVICE_USER" >/dev/null 2>&1 || die "Cannot resolve the installing user: $SERVICE_USER"
+SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 [[ "$HTTP_PORT" =~ ^[0-9]+$ ]] || die "HTTP port must be numeric."
 (( HTTP_PORT >= 1 && HTTP_PORT <= 65535 )) || die "HTTP port is out of range."
 [[ "$ROOT" =~ ^[A-Za-z0-9_./-]+$ ]] || die "The installation path may only contain letters, numbers, _, -, . and /."
 [[ -f "$ROOT/courseworks/package.json" ]] || die "Run the script from a complete AES repository clone."
+[[ "$(stat -c %u "$ROOT")" == "$(id -u "$SERVICE_USER")" ]] \
+  || die "The AES repository must be owned by $SERVICE_USER. Clone it without sudo under that user's home directory."
 
 required_commands=(
-  awk curl docker git grep head hostname install ip iptables libreoffice mysql
-  nginx node npm openssl pdftoppm python3 runuser sed systemctl tail useradd usermod
+  awk cp curl docker find getent git grep head hostname install ip iptables libreoffice mysql
+  nginx node npm openssl pdftoppm python3 runuser sed stat systemctl tail usermod
 )
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null 2>&1 || die "Missing command: $command_name. Complete section 2 of INSTALL.md first."
+done
+for writable_path in "$ROOT" "$ROOT/.git" "$ROOT/courseworks" "$ROOT/management"; do
+  runuser -u "$SERVICE_USER" -- test -w "$writable_path" \
+    || die "$writable_path is not writable by $SERVICE_USER. Clone the repository without sudo."
 done
 
 node_major="$(node --version | sed -E 's/^v([0-9]+).*/\1/')"
@@ -88,13 +101,10 @@ log "Starting MySQL, Docker and Nginx"
 systemctl enable --now mysql docker nginx
 docker info >/dev/null
 
-log "Preparing service account and repository permissions"
-if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-  useradd --system --create-home --home-dir "$SERVICE_HOME" --shell /bin/bash "$SERVICE_USER"
-fi
+log "Preparing the application runtime for $SERVICE_USER"
 usermod -aG docker "$SERVICE_USER"
-install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$SERVICE_HOME"
-chown -R "$SERVICE_USER:$SERVICE_USER" "$ROOT"
+install -d -o root -g root -m 0755 /var/lib/aes
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$SERVICE_HOME"
 
 read_superuser_value() {
   local key="$1"
@@ -132,7 +142,7 @@ write_superuser_config() {
     }
     { print }
   ' "$ROOT/superuser.toml" >"$temporary"
-  install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$temporary" "$ROOT/superuser.toml"
+  install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 "$temporary" "$ROOT/superuser.toml"
   rm -f "$temporary"
 }
 
@@ -168,7 +178,7 @@ configure_superuser() {
   else
     [[ -n "$current_email" && "$current_email" == *@* ]] || die "superuser.toml contains an invalid email."
     [[ ${#current_password} -ge 6 ]] || die "superuser.toml password must contain at least 6 characters."
-    chown "$SERVICE_USER:$SERVICE_USER" "$ROOT/superuser.toml"
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$ROOT/superuser.toml"
     chmod 0600 "$ROOT/superuser.toml"
   fi
 }
@@ -226,11 +236,11 @@ if [[ ! -f "$ENV_FILE" ]]; then
   set_env_value "$temporary_env" ARCHIVE_ROOT "$ROOT/archive-data"
   set_env_value "$temporary_env" WORKSPACE_ROOT "$ROOT/courseworks/student-workspace"
   set_env_value "$temporary_env" DOCKER_DIRECT_IFACE "$DEFAULT_IFACE"
-  install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$temporary_env" "$ENV_FILE"
+  install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 "$temporary_env" "$ENV_FILE"
   rm -f "$temporary_env"
 else
   log "Keeping existing courseworks/.env"
-  chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE"
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$ENV_FILE"
   chmod 0600 "$ENV_FILE"
 fi
 
@@ -251,12 +261,12 @@ FLUSH PRIVILEGES;
 SQL
 
 log "Preparing persistent data directories and Python environment"
-install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 \
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 \
   "$ROOT/accounts-data" \
   "$ROOT/homeworks/uploads" \
   "$ROOT/slideshow/uploads" \
   "$ROOT/courseworks/student-workspace"
-install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$ROOT/archive-data"
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "$ROOT/archive-data"
 
 if [[ ! -x "$VENV/bin/python" ]]; then
   runuser -u "$SERVICE_USER" -- python3 -m venv "$VENV"
@@ -266,7 +276,7 @@ runuser -u "$SERVICE_USER" -- "$VENV/bin/pip" install \
   -r "$ROOT/homeworks/requirements.txt" \
   -r "$ROOT/slideshow/requirements.txt"
 
-as_aes() {
+as_app() {
   runuser -u "$SERVICE_USER" -- env \
     HOME="$SERVICE_HOME" \
     PATH="$VENV/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
@@ -275,8 +285,15 @@ as_aes() {
 
 log "Installing, testing and building Courseworks"
 cd "$ROOT/courseworks"
-as_aes npm run setup
-as_aes npm run seed
+as_app npm run setup
+as_app npm run seed
+
+log "Publishing the Courseworks web application"
+install -d -o root -g www-data -m 0755 "$WEB_ROOT"
+find "$WEB_ROOT" -mindepth 1 -depth -delete
+cp -a "$ROOT/courseworks/apps/web/dist/." "$WEB_ROOT/"
+chown -R root:www-data "$WEB_ROOT"
+chmod -R u=rwX,g=rX,o=rX "$WEB_ROOT"
 
 log "Creating the restricted Courseworks Docker network"
 set -a
@@ -318,6 +335,7 @@ ExecStart=$NODE_BIN apps/server/src/build/app/server.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
+Environment=HOME=$SERVICE_HOME
 Environment=PATH=$VENV/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=$ENV_FILE
 
@@ -341,6 +359,7 @@ ExecStart=$VENV/bin/gunicorn --bind unix:/run/homework/homework.sock --worker-cl
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=HOME=$SERVICE_HOME
 Environment=FLASK_ENV=production
 Environment=APPLICATION_ROOT=/homeworks
 Environment=SERVICE_PORTAL_URL=/portal
@@ -367,6 +386,7 @@ ExecStart=$VENV/bin/gunicorn --bind unix:/run/slideshow/slideshow.sock --worker-
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=HOME=$SERVICE_HOME
 Environment=APPLICATION_ROOT=/slideshow
 Environment=SERVICE_PORTAL_URL=/portal
 EnvironmentFile=$ENV_FILE
@@ -382,9 +402,7 @@ chmod 0644 \
   /etc/systemd/system/slideshow.service
 
 log "Installing the Nginx entry point on port $HTTP_PORT"
-escaped_root="$(printf '%s' "$ROOT" | sed 's/[\\&#]/\\&/g')"
 sed \
-  -E -e "s#^([[:space:]]*)root[[:space:]]+.*courseworks/apps/web/dist;#\\1root ${escaped_root}/courseworks/apps/web/dist;#" \
   -e "s/listen 10001;/listen ${HTTP_PORT};/" \
   "$ROOT/courseworks/scripts/nginx-courseworks.conf" \
   > /etc/nginx/sites-available/aes
