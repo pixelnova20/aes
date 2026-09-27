@@ -1,0 +1,48 @@
+# Local environment and secrets
+/courseworks/.env
+/courseworks/.env.local
+/.venv/
+**/node_modules/
+
+# Generated build and test output
+/courseworks/apps/server/src/build/
+/courseworks/apps/web/dist/
+/management/dist/
+**/coverage/
+*.tsbuildinfo
+
+# Runtime databases and recoverable account archives
+/accounts-data/*.db*
+/accounts-data/backups/
+/archive-data/*
+!/archive-data/.gitkeep
+
+# User uploads, converted slides and Courseworks workspaces
+/homeworks/uploads/
+/slideshow/uploads/
+/courseworks/student-workspace/
+
+# Runtime logs and Python caches
+/courseworks/logs/
+**/__pycache__/
+**/.pytest_cache/
+*.py[cod]
+*.log
+
+# Local databases, keys and backup artifacts
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.bak
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+.vscode/

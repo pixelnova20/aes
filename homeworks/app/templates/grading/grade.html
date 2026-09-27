@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}批改 — {{ student.name }}{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>批改作业 — {{ student.name }}</h2>
+  <a href="{{ url_for(request.endpoint.replace('grade_student','assignment_detail'), assignment_id=assignment.id) if 'grade_student' in (request.endpoint or '') else url_for('teacher.assignment_detail', assignment_id=assignment.id) }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <p><strong>作业：</strong>{{ assignment.title }}</p>
+  <p><strong>学生：</strong>{{ student.name }}（{{ student.email }}）</p>
+  <p><strong>状态：</strong><span class="badge badge-{{ submission.status if submission else 'not_started' }}">{{ submission.status_label if submission else '未开始' }}</span></p>
+  {% if grade and grade.status == 'draft' %}<p><span class="badge badge-saved">批改暂存</span></p>{% endif %}
+  {% if submission and submission.is_late %}<p><span class="badge badge-closed">⚠ 迟交</span></p>{% endif %}
+</div>
+
+{% if submission %}
+<form method="post">
+<input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+{% for item in items %}
+{% set aq = item.aq %}
+<div class="question-item {{ aq.type }}">
+  <div class="q-num">{{ aq.question_number }}. {{ aq.type_label }}</div>
+  <div class="q-stem">{{ aq.stem_html|content_html }}</div>
+
+  {% if aq.type == 'choice' %}
+    <div class="options">
+      {% for opt in item.options %}
+      <div class="question-option"><strong>{{ opt.label }}.</strong><div>{{ opt.content_html|content_html }}</div></div>
+      {% endfor %}
+  </div>
+  <p><strong>学生选择：</strong>
+    {% if item.answer %}<span class="badge badge-submitted">{{ item.answer.choice_answer or '—' }}</span>{% else %}—{% endif %}
+  </p>
+  {% else %}
+  <p><strong>学生答案：</strong></p>
+  <div style="background:#fff;border:1px solid #ddd;padding:10px;border-radius:4px;white-space:pre-wrap;">
+    {{ item.answer.text_answer if item.answer else '—' }}
+  </div>
+  {% if item.answer and item.files %}
+  <div class="file-list mt-8">
+    {% for f in item.files %}
+    <div class="file-item">
+      <a href="{{ url_for('files.serve', file_id=f.id) }}" target="_blank">
+        <img src="{{ url_for('files.serve', file_id=f.id) }}" alt="{{ f.original_name }}" style="max-width:260px;max-height:200px;">
+      </a>
+      <div class="text-muted">{{ f.original_name }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+  <div class="question-comment-editor">
+    <label for="question-comment-{{ aq.id }}">本题批注</label>
+    <textarea id="question-comment-{{ aq.id }}" name="question_comment_{{ aq.id }}" class="form-control" rows="2" maxlength="2000" placeholder="例如：正确答案是 B。">{{ item.answer.grader_comment if item.answer and item.answer.grader_comment else '' }}</textarea>
+  </div>
+</div>
+{% endfor %}
+
+<div class="card mt-16">
+  <h3>批改</h3>
+  <div class="form-group">
+    <label>分数</label>
+    <input type="number" step="0.1" name="score" class="form-control" style="width:160px;" value="{{ grade.score if grade and grade.score is not none else '' }}">
+  </div>
+  <div class="form-group">
+    <label>总体评价</label>
+    <textarea name="comment" class="form-control">{{ grade.comment or '' }}</textarea>
+  </div>
+  <button type="submit" name="action" value="draft" class="btn btn-secondary">暂存</button>
+  <button type="submit" name="action" value="submit" class="btn btn-success">提交</button>
+</div>
+</form>
+{% else %}
+<div class="card"><p class="text-muted">该学生尚未提交作业。</p></div>
+{% endif %}
+{% endblock %}

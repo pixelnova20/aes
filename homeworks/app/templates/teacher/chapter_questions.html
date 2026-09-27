@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}章节习题{% endblock %}
+{% block content %}
+<div class="card-header">
+  <div>
+    <p class="text-muted">{{ chapter.course.name }} · 第 {{ chapter.chapter_number }} 章</p>
+    <h2>{{ chapter.title or '未命名章节' }}</h2>
+  </div>
+  <a href="{{ url_for('teacher.chapters', course_id=chapter.course_id) }}" class="btn btn-sm btn-secondary">返回章节</a>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div>
+      <h3>导入章节习题</h3>
+      <p class="text-muted">支持 Markdown 文件或包含 Markdown 与图片的 ZIP 文件。</p>
+    </div>
+    <span class="badge badge-{{ 'published' if chapter.parse_status == 'parsed' else 'saved' if chapter.parse_status == 'parse_failed' else 'not_started' }}">{{ chapter.parse_status_label }}</span>
+  </div>
+  <form method="post" action="{{ url_for('teacher.upload_chapter_questions', chapter_id=chapter.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div class="question-upload-row">
+      <input type="file" name="question_bank" accept=".md,.zip,text/markdown" class="form-control" required>
+      <button type="submit" class="btn btn-success">上传并解析</button>
+    </div>
+  </form>
+</div>
+
+<div class="card-header">
+  <h3>章节习题</h3>
+  <span class="text-muted">共 {{ questions|length }} 道</span>
+</div>
+{% if question_sections %}
+  {% for section in question_sections %}
+  <section class="question-section" data-question-type="{{ section.type }}">
+    <div class="question-section-heading">
+      <h3>{{ section.label }}</h3>
+      <span>{{ section.questions|length }} 道</span>
+    </div>
+    {% for question in section.questions %}
+    <article class="question-item {{ question.type }}">
+      <div class="question-heading">
+        <strong>第 {{ question.question_number }} 题</strong>
+        <span class="badge badge-not_started">{{ question.type_label }}</span>
+      </div>
+      <div class="q-stem">{{ question.stem_html|content_html }}</div>
+      {% if question.type == 'choice' %}
+      <div class="options">
+        {% for option in question.options %}
+        <div class="question-option"><strong>{{ option.label }}.</strong><div>{{ option.content_html|content_html }}</div></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+  {% endfor %}
+{% else %}
+<div class="card"><p class="text-muted">该章节尚未导入习题。</p></div>
+{% endif %}
+{% endblock %}

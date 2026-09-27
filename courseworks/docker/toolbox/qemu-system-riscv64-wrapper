@@ -1,0 +1,43 @@
+#!/bin/sh
+# 文件作用：包装 RISC-V QEMU 命令，在调用方未指定显示方式时自动启用无窗口 VNC。
+# 模块位置：docker/toolbox，属于 QEMU 沙箱运行适配层。
+# 重要流程：保留显式 nographic/display/vnc 参数，否则追加默认 display 与 VNC 参数；本文件不定义独立函数。
+set -eu
+
+if [ -n "${COURSEWORKS_QMP_SOCKET:-}" ]; then
+  set -- -qmp "unix:${COURSEWORKS_QMP_SOCKET},server=on,wait=off" "$@"
+fi
+
+has_display=0
+display_is_none=0
+previous=""
+for argument in "$@"; do
+  if [ "$previous" = "-display" ]; then
+    has_display=1
+    case "$argument" in
+      none|none,*) display_is_none=1 ;;
+    esac
+  fi
+  case "$argument" in
+    -nographic|-vnc|-vnc=*)
+      exec /usr/bin/qemu-system-riscv64 "$@"
+      ;;
+    -display=none|-display=none,*)
+      has_display=1
+      display_is_none=1
+      ;;
+    -display=*)
+      has_display=1
+      ;;
+  esac
+  previous="$argument"
+done
+
+if [ "$has_display" -eq 1 ]; then
+  if [ "$display_is_none" -eq 1 ]; then
+    exec /usr/bin/qemu-system-riscv64 -vnc 0.0.0.0:0 "$@"
+  fi
+  exec /usr/bin/qemu-system-riscv64 "$@"
+fi
+
+exec /usr/bin/qemu-system-riscv64 -display none -vnc 0.0.0.0:0 "$@"

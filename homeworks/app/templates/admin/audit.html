@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}操作日志{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>操作日志</h2>
+  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>时间</th><th>用户</th><th>操作</th><th>详情</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in logs %}
+      <tr>
+        <td>{{ entry.created_at|dt }}</td>
+        <td>{{ entry.user_email or '系统' }}</td>
+        <td><span class="badge badge-submitted">{{ entry.action }}</span></td>
+        <td>{{ entry.detail or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

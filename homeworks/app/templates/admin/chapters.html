@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}章节管理 — {{ course.name }}{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>章节管理 — {{ course.name }}</h2>
+  <a href="{{ url_for('admin.courses') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <h3>新建章节</h3>
+  <form method="post" action="{{ url_for('admin.create_chapter', course_id=course.id) }}" class="mb-16">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div style="display:flex;gap:10px;align-items:end;">
+      <div style="width:100px"><label>章节号</label><input type="number" name="chapter_number" class="form-control" required></div>
+      <div style="flex:1"><label>标题</label><input type="text" name="title" class="form-control"></div>
+      <div><button type="submit" class="btn btn-primary">创建</button></div>
+    </div>
+  </form>
+
+  <table class="table">
+    <thead><tr><th>章节号</th><th>标题</th><th>题库状态</th><th>题目数</th><th>上传时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for ch in chapters %}
+      <tr>
+        <td>{{ ch.chapter_number }}</td>
+        <td>{{ ch.title or '—' }}</td>
+        <td>
+          <span class="badge badge-{{ 'published' if ch.parse_status=='parsed' else 'saved' if ch.parse_status=='parse_failed' else 'not_started' }}">{{ ch.parse_status_label }}</span>
+        </td>
+        <td>{{ question_counts.get(ch.id, 0) }}</td>
+        <td>{{ ch.markdown_uploaded_at|dt }}</td>
+        <td class="table-actions">
+          <form method="post" action="{{ url_for('admin.update_chapter', chapter_id=ch.id) }}" class="inline-form" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="number" name="chapter_number" class="form-control" value="{{ ch.chapter_number }}" style="width:80px;">
+            <input type="text" name="title" class="form-control" value="{{ ch.title or '' }}" style="width:180px;">
+            <button type="submit" class="btn btn-sm btn-primary">更新</button>
+            <button type="submit" name="action" value="delete" class="btn btn-sm btn-danger" onclick="return confirm('确认删除章节 {{ ch.title or ch.chapter_number }}？')">删除</button>
+          </form>
+          <form method="post" action="{{ url_for('admin.upload_markdown', chapter_id=ch.id) }}" enctype="multipart/form-data" style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="file" name="markdown" accept=".md,.zip,text/markdown" class="form-control" style="width:200px;">
+            <button type="submit" class="btn btn-sm btn-success">上传题库</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

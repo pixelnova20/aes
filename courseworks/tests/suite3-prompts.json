@@ -1,0 +1,22 @@
+[
+  {"id":1, "desc":"创建单个文件", "prompt":"创建文件 notes.txt，内容是：这是一个测试笔记文件。", "expect_files":["notes.txt"]},
+  {"id":2, "desc":"创建多个文件", "prompt":"创建两个文件：a.txt 内容是 AAA，b.txt 内容是 BBB。", "expect_files":["notes.txt","a.txt","b.txt"]},
+  {"id":3, "desc":"创建子目录中的文件", "prompt":"创建目录 lib/，然后在里面创建文件 utils.c，内容是 // utility functions。", "expect_files":["notes.txt","a.txt","b.txt","lib/utils.c"]},
+  {"id":4, "desc":"删除单个文件", "prompt":"删除 notes.txt", "expect_files":["a.txt","b.txt","lib/utils.c"]},
+  {"id":5, "desc":"修改已有文件", "prompt":"修改 a.txt，把内容改为 AAAAA BBBBB CCCCC。", "expect_files":["a.txt","b.txt","lib/utils.c"], "expect_content":{"a.txt":"AAAAA BBBBB CCCCC"}},
+  {"id":6, "desc":"同时创建和删除", "prompt":"删除 b.txt，同时创建 c.txt 内容是 CCC。", "expect_files":["a.txt","lib/utils.c","c.txt"]},
+  {"id":7, "desc":"创建多层目录中的文件", "prompt":"创建目录 src/kernel/，在里面创建文件 main.c，内容是 int main() { return 0; }。", "expect_files":["a.txt","lib/utils.c","c.txt","src/kernel/main.c"]},
+  {"id":8, "desc":"删除目录", "prompt":"删除 lib/ 目录。", "expect_files":["a.txt","c.txt","src/kernel/main.c"]},
+  {"id":9, "desc":"创建 README", "prompt":"创建 README.md，内容为：# My Project\n\nThis is a test project.。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md"]},
+  {"id":10, "desc":"创建 Makefile", "prompt":"创建 Makefile，内容包含 all 和 clean 两个 target。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md","Makefile"]},
+  {"id":11, "desc":"创建头文件", "prompt":"创建 src/kernel/kernel.h，内容是 #pragma once\nvoid kernel_main();。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h"]},
+  {"id":12, "desc":"批量创建文件", "prompt":"在 src/ 目录下创建三个文件：config.h 内容是 #define VERSION 1，types.h 内容是 typedef int size_t;，debug.h 内容是 #define DEBUG 0。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h","src/debug.h"]},
+  {"id":13, "desc":"修改嵌套文件", "prompt":"修改 src/kernel/main.c，在 return 0 前加一行注释 // all done。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h","src/debug.h"]},
+  {"id":14, "desc":"删除嵌套目录中的文件", "prompt":"删除 src/debug.h。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h"]},
+  {"id":15, "desc":"创建 .gitignore 类文件", "prompt":"创建 .gitignore 文件，内容是 *.o 和 *.elf。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h",".gitignore"]},
+  {"id":16, "desc":"创建汇编文件", "prompt":"创建 src/kernel/boot.S，内容是 .section .text\n.globl _start\n_start: j _start。", "expect_files":["a.txt","c.txt","src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h",".gitignore","src/kernel/boot.S"]},
+  {"id":17, "desc":"删除多个文件", "prompt":"删除 a.txt 和 c.txt。", "expect_files":["src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h",".gitignore","src/kernel/boot.S"]},
+  {"id":18, "desc":"创建 Python 脚本", "prompt":"创建 scripts/check.py，内容是 #!/usr/bin/env python3\nprint('check passed')。", "expect_files":["src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h",".gitignore","src/kernel/boot.S","scripts/check.py"]},
+  {"id":19, "desc":"创建扩展名特殊的文件", "prompt":"创建 kernel/linker.ld，内容是 SECTIONS { .text : { *(.text) } }。", "expect_files":["src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h",".gitignore","src/kernel/boot.S","scripts/check.py","kernel/linker.ld"]},
+  {"id":20, "desc":"修改 .gitignore", "prompt":"在 .gitignore 中追加一行 *.swp。", "expect_files":["src/kernel/main.c","README.md","Makefile","src/kernel/kernel.h","src/config.h","src/types.h",".gitignore","src/kernel/boot.S","scripts/check.py","kernel/linker.ld"]}
+]

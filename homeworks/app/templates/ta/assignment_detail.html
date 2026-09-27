@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ assignment.title }}{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>{{ assignment.title }}</h2>
+  <a href="{{ url_for('ta.assignments') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <p><strong>课程：</strong>{{ assignment.course.name }} · <strong>章节：</strong>第{{ assignment.chapter.chapter_number }}章</p>
+  <p><strong>发布教师：</strong>{{ assignment.publisher.name }}</p>
+  <p><strong>状态：</strong><span class="badge badge-{{ assignment.status }}">{{ assignment.status_label }}</span></p>
+</div>
+<div class="card">
+  <h3>学生列表</h3>
+  <table class="table">
+    <thead><tr><th>姓名</th><th>邮箱</th><th>提交状态</th><th>分数</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for student, submission, grade in rows %}
+      <tr>
+        <td>{{ student.name }}</td>
+        <td>{{ student.email }}</td>
+        <td>
+          <span class="badge badge-{{ submission.status if submission else 'not_started' }}">{{ submission.status_label if submission else '未开始' }}</span>
+          {% if submission and submission.is_late %}<span class="badge badge-closed" style="margin-left:4px;">迟交</span>{% endif %}
+        </td>
+        <td>{{ grade.score if grade and grade.status == 'submitted' else '—' }}</td>
+        <td>
+          {% if assignment.status in ('published', 'closed') and submission and submission.status in ('submitted', 'graded') %}
+          <a href="{{ url_for('ta.grade_student', assignment_id=assignment.id, student_id=student.id) }}" class="btn btn-sm btn-primary">批改</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

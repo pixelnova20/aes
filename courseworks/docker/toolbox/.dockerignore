@@ -1,0 +1,5 @@
+.git
+node_modules
+student-workspace
+apps/server/dist
+apps/web/dist

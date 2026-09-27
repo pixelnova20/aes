@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <title>{% block title %}幻灯片{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% if current_user %}role-{{ current_user.role }}{% else %}role-guest{% endif %} {% block body_class %}{% endblock %}">
+  {% block page %}
+  <header class="site-header">
+    <a class="site-brand" href="{{ url_for('slideshow.index') }}">
+      <span class="site-mark">S</span>
+      <span>幻灯片</span>
+    </a>
+    {% if current_user %}
+    <div class="site-account">
+      <span>{{ current_user.name }}</span>
+      {% if current_user.class_name %}<small>{{ current_user.course_name }} / {{ current_user.class_name }}</small>{% endif %}
+      <a class="button button-quiet" href="/portal">返回服务门户</a>
+    </div>
+    {% endif %}
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  {% endblock %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

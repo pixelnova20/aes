@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}发布作业{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>发布作业</h2>
+  <a href="{{ url_for('teacher.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+
+{% if not current_class %}
+<div class="card">
+  <p class="text-muted">尚未确定当前工作班级，请返回服务门户选择班级后重新进入作业系统。</p>
+  <a href="/portal" class="btn btn-primary">服务门户</a>
+</div>
+{% else %}
+<div class="card">
+  <h3>1. 选择章节</h3>
+  <form method="get" class="mb-16">
+    <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
+      <div style="min-width:180px">
+        <label>当前班级</label>
+        <div class="form-control" aria-label="当前班级">{{ current_class.name }}</div>
+      </div>
+      <div style="min-width:180px">
+        <label>课程</label>
+        <div class="form-control" aria-label="当前课程">{{ course.name }}</div>
+      </div>
+      <div style="width:200px">
+        <label>章节</label>
+        <select name="chapter_id" class="form-control" onchange="this.form.submit()">
+          <option value="">— 请选择 —</option>
+          {% for ch in chapters %}
+          <option value="{{ ch.id }}" {% if ch.id==selected_chapter_id %}selected{% endif %}>第{{ ch.chapter_number }}章 {{ ch.title or '' }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><button type="submit" class="btn btn-primary">载入题目</button></div>
+    </div>
+  </form>
+</div>
+
+{% if course and not chapters %}
+<div class="card">
+  <p class="text-muted">该课程尚未创建章节。</p>
+  <a href="{{ url_for('teacher.chapters') }}" class="btn btn-primary">新增章节</a>
+</div>
+{% elif selected_chapter_id and not questions %}
+<div class="card">
+  <p class="text-muted">该章节尚未添加习题。</p>
+  <a href="{{ url_for('teacher.chapter_questions', chapter_id=selected_chapter_id) }}" class="btn btn-primary">管理章节习题</a>
+</div>
+{% endif %}
+
+{% if questions %}
+<div class="card">
+  <h3>2. 发布设置</h3>
+  <form method="post" action="{{ url_for('teacher.create_assignment') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <input type="hidden" name="chapter_id" value="{{ selected_chapter_id }}">
+
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <div style="flex:1"><label>作业标题</label><input type="text" name="title" class="form-control" required></div>
+      <div style="width:200px"><label>截止时间 <small style="color:red;">*</small></label><input type="datetime-local" name="due_at" class="form-control" required></div>
+    </div>
+    <div class="form-group"><label>说明</label><textarea name="description" class="form-control"></textarea></div>
+
+    <h4>选择题目（共 {{ questions|length }} 题）</h4>
+    {% for section in question_sections %}
+    <section class="question-section" data-question-type="{{ section.type }}">
+      <div class="question-section-heading">
+        <h3>{{ section.label }}</h3>
+        <span>{{ section.questions|length }} 道</span>
+      </div>
+      {% for q in section.questions %}
+      <div class="question-item {{ q.type }}">
+        <label style="font-weight:600;">
+          <input type="checkbox" name="question_ids" value="{{ q.id }}">
+          第 {{ q.question_number }} 题
+        </label>
+        <div class="q-stem">{{ q.stem_html|content_html }}</div>
+        {% if q.type == 'choice' %}
+        <div class="options">
+          {% for opt in q.options %}
+          <div class="question-option"><strong>{{ opt.label }}.</strong><div>{{ opt.content_html|content_html }}</div></div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endfor %}
+
+    <div class="mt-16">
+      <button type="submit" name="action" value="draft" class="btn btn-secondary">存为草稿</button>
+      <button type="submit" name="action" value="publish" class="btn btn-success">发布</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

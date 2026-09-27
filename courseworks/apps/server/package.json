@@ -1,0 +1,53 @@
+{
+  "name": "@courseworks/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/app/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
+    "start": "node src/build/app/server.js",
+    "test:unit": "node --import tsx --test src/config/*.test.ts src/modules/workspaces/*.test.ts src/modules/evaluation-history/*.test.ts src/modules/conversations/*.test.ts src/modules/ai-settings/*.test.ts src/modules/execution/*.test.ts src/modules/code-navigation/*.test.ts src/modules/coding-agent/adapters/pi/*.test.ts src/application/agent/commands/*.test.ts",
+    "sync:model-catalog": "node scripts/sync-model-catalog.mjs",
+    "model:add": "node --import tsx scripts/manage-local-model.ts add",
+    "model:list": "node --import tsx scripts/manage-local-model.ts list",
+    "model:remove": "node --import tsx scripts/manage-local-model.ts remove",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:bootstrap": "node scripts/bootstrap-empty-database.mjs",
+    "prisma:migrate": "cd ../.. && prisma migrate dev --schema apps/server/prisma/schema.prisma",
+    "prisma:deploy": "cd ../.. && prisma migrate deploy --schema apps/server/prisma/schema.prisma",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@all-together/management": "file:../../../management",
+    "@earendil-works/pi-agent-core": "0.82.1",
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@prisma/client": "6.19.3",
+    "bcrypt": "6.0.0",
+    "cors": "2.8.6",
+    "dotenv": "16.6.1",
+    "express": "4.22.2",
+    "jsonwebtoken": "9.0.3",
+    "morgan": "1.11.0",
+    "openai": "4.104.0",
+    "smol-toml": "1.8.0",
+    "typebox": "1.1.38",
+    "uuid": "11.1.1",
+    "ws": "8.21.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "6.0.0",
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6",
+    "@types/jsonwebtoken": "9.0.10",
+    "@types/morgan": "1.9.10",
+    "@types/node": "22.20.1",
+    "@types/ws": "8.18.1",
+    "prisma": "6.19.3",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3"
+  }
+}

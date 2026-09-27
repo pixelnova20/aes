@@ -1,0 +1,18 @@
+# AES superuser credentials. Change these example values before deployment.
+[superuser]
+email = "abc@abc.com"
+password = "abcdef"
+
+[limits.workspace]
+disk_mb = 250
+max_terminals = 5
+idle_minutes = 30
+
+[limits.execution]
+max_cpu_cores = 1.0
+max_memory_mb = 1024
+max_processes = 192
+max_concurrent_qemu = 2
+
+[limits.ai]
+max_concurrent_requests_per_user = 1

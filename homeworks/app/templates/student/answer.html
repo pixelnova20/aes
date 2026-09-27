@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+{% block title %}{{ assignment.title }}{% endblock %}
+{% block main_class %}answer-main-container{% endblock %}
+{% block content %}
+<div class="answer-workspace" id="answer-workspace">
+<div class="answer-content">
+<div class="card-header">
+  <h2>{{ assignment.title }}</h2>
+  <a href="{{ url_for('student.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <p><strong>课程：</strong>{{ assignment.course.name }} · <strong>章节：</strong>第{{ assignment.chapter.chapter_number }}章</p>
+  <p><strong>截止时间：</strong>{{ assignment.due_at|dt }}</p>
+  <p><strong>状态：</strong><span class="badge badge-{{ submission.status }}">{{ submission.status_label }}</span></p>
+  {% if is_past_due and can_edit %}
+  <p class="text-muted" style="color:#e74c3c;">⚠ 已超过截止时间，你仍可暂存但无法提交。</p>
+  {% endif %}
+  {% if submission.is_late %}<p><span class="badge badge-closed">⚠ 迟交</span></p>{% endif %}
+  {% if assignment.description %}<p><strong>说明：</strong>{{ assignment.description }}</p>{% endif %}
+  {% if is_historical %}<p class="text-muted">该作业已由教师撤回，当前显示的是你的历史提交记录。</p>{% endif %}
+</div>
+
+{% if not can_edit %}
+<div class="card">
+  <p class="text-muted">作业已提交，如需修改请联系教师或助教开放重交。</p>
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('student.save', assignment_id=assignment.id) if can_edit else '' }}" id="answer-form">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+
+  {% for item in items %}
+  {% set aq = item.aq %}
+  <div class="question-item {{ aq.type }}">
+    <div class="question-toolbar">
+      <div class="q-num">{{ aq.question_number }}. {{ aq.type_label }}</div>
+      {% if can_ask_ai %}<button
+        type="button"
+        class="btn btn-sm btn-ai-tutor"
+        data-question-id="{{ aq.id }}"
+        data-question-label="第 {{ aq.question_number }} 题"
+        data-chat-url="{{ url_for('student.ai_chat_stream', assignment_id=assignment.id, question_id=aq.id) }}"
+      >问 AI</button>{% endif %}
+    </div>
+    <div class="q-stem">{{ aq.stem_html|content_html }}</div>
+
+    {% if aq.type == 'choice' %}
+    <div class="options">
+      {% for opt in item.options %}
+      <label class="question-option">
+        <input type="radio" name="q_{{ aq.id }}" value="{{ opt.label }}"
+          {% if not can_edit %}disabled{% endif %}
+          {% if item.answer and item.answer.choice_answer == opt.label %}checked{% endif %}>
+        <strong>{{ opt.label }}.</strong><span>{{ opt.content_html|content_html }}</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    {% elif aq.type == 'blank' %}
+    <input type="text" name="q_{{ aq.id }}" class="form-control"
+      value="{{ item.answer.text_answer or '' }}" {% if not can_edit %}disabled{% endif %}>
+
+    {% elif aq.type in ('short_answer', 'comprehensive') %}
+    <textarea name="q_{{ aq.id }}" class="form-control" {% if not can_edit %}disabled{% endif %}>{{ item.answer.text_answer or '' }}</textarea>
+
+    {% if aq.type == 'comprehensive' and can_edit and item.answer %}
+    <div class="upload-area mt-8">
+      <label>上传图片（最多 {{ 5 }} 张，自动转换为 PNG 格式。文件名格式：YYYY-MM-DD-problem{{ aq.question_number }}-{序号}.png）</label>
+      <input type="file" class="file-upload" data-upload-url="{{ url_for('student.upload_file', answer_id=item.answer.id) }}" accept="image/jpeg,image/png,image/webp">
+      <small class="text-muted">已上传 {{ item.files|length }} / 5 张</small>
+    </div>
+    {% endif %}
+
+    {% if aq.type == 'comprehensive' and item.answer and item.files %}
+    <div class="file-list mt-8">
+      {% for f in item.files %}
+      <div class="file-item" data-file-id="{{ f.id }}">
+        <a href="{{ url_for('files.serve', file_id=f.id) }}" target="_blank">
+          <img src="{{ url_for('files.serve', file_id=f.id) }}" alt="{{ f.original_name }}">
+        </a>
+        {% if can_edit %}
+        <button type="button" class="del-btn" data-delete-url="{{ url_for('student.delete_file', file_id=f.id) }}" onclick="deleteFile(this)" title="删除">&times;</button>
+        {% endif %}
+        <div class="text-muted">{{ f.original_name }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+    {% if grade and grade.status == 'submitted' and submission.status == 'graded' and item.answer and item.answer.grader_comment %}
+    <div class="grader-comment">
+      <strong>教师批注</strong>
+      <p>{{ item.answer.grader_comment }}</p>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if can_edit %}
+  <div class="mt-16">
+    <button type="submit" class="btn btn-secondary" formaction="{{ url_for('student.save', assignment_id=assignment.id) }}">暂存</button>
+    <button type="submit" class="btn btn-success" formaction="{{ url_for('student.submit', assignment_id=assignment.id) }}"
+      {% if is_past_due %}disabled title="已超过截止时间"{% endif %}
+      onclick="return confirm('确认提交？提交后默认不可修改。')">提交</button>
+    {% if is_past_due %}<small class="text-muted" style="color:#e74c3c;">已截止，无法提交</small>{% endif %}
+  </div>
+  {% endif %}
+</form>
+</div>
+
+<aside class="ai-tutor-panel" id="ai-tutor-panel" aria-hidden="true" aria-label="{{ 'AI 作业复盘' if ai_review_mode else 'AI 作业辅导' }}">
+  <div class="ai-tutor-header">
+    <div>
+      <strong>{{ 'AI 作业复盘' if ai_review_mode else 'AI 作业辅导' }}</strong>
+      <div class="ai-question-label" id="ai-question-label">请选择一道题目</div>
+    </div>
+    <button type="button" class="ai-close-button" id="ai-close-button" aria-label="关闭 AI 辅导" title="关闭">&times;</button>
+  </div>
+  <div class="ai-chat-messages" id="ai-chat-messages" aria-live="polite"></div>
+  <form class="ai-chat-composer" id="ai-chat-form">
+    <label for="ai-user-prompt">你的问题</label>
+    <textarea id="ai-user-prompt" maxlength="4000" placeholder="{{ '询问答案、教师批注或解题过程……' if ai_review_mode else '告诉 AI 你卡在了哪一步……' }}" required></textarea>
+    <button type="submit" class="btn btn-primary" id="ai-send-button">发送</button>
+  </form>
+</aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/marked.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/purify.min.js') }}"></script>
+<script>
+const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+document.querySelectorAll('.file-upload').forEach(input => {
+  input.addEventListener('change', async function() {
+    const file = this.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const resp = await fetch(this.dataset.uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken },
+        body: formData,
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        location.reload();
+      } else {
+        alert(data.error || '上传失败');
+      }
+    } catch (e) {
+      alert('上传失败：' + e.message);
+    }
+  });
+});
+
+async function deleteFile(btn) {
+  if (!confirm('确认删除该图片？')) return;
+  try {
+    const resp = await fetch(btn.dataset.deleteUrl, {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrfToken },
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      btn.closest('.file-item').remove();
+    } else {
+      alert(data.error || '删除失败');
+    }
+  } catch (e) {
+    alert('删除失败：' + e.message);
+  }
+}
+
+const answerWorkspace = document.getElementById('answer-workspace');
+const aiPanel = document.getElementById('ai-tutor-panel');
+const aiQuestionLabel = document.getElementById('ai-question-label');
+const aiMessages = document.getElementById('ai-chat-messages');
+const aiForm = document.getElementById('ai-chat-form');
+const aiPrompt = document.getElementById('ai-user-prompt');
+const aiSendButton = document.getElementById('ai-send-button');
+const conversations = new Map();
+const emptyConversationMessage = {{ ('这道题已经完成批改。你可以和我讨论正确答案、你的作答以及教师批注。' if ai_review_mode else '你可以告诉我目前的思路或卡住的步骤。我会给出提示，但不会直接提供答案。')|tojson }};
+let activeQuestion = null;
+let aiBusy = false;
+
+function renderAssistantMarkdown(element, content) {
+  if (!window.marked || !window.DOMPurify) {
+    element.textContent = content;
+    return;
+  }
+  try {
+    const parsed = window.marked.parse(content, { breaks: true, gfm: true });
+    element.innerHTML = window.DOMPurify.sanitize(parsed, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['img', 'style'],
+      FORBID_ATTR: ['style'],
+    });
+  } catch (error) {
+    element.textContent = content;
+  }
+  element.querySelectorAll('a').forEach(link => {
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+  });
+}
+
+function appendMessage(role, content, pending = false) {
+  const row = document.createElement('div');
+  row.className = 'ai-message-row ai-message-' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'ai-message-bubble' + (pending ? ' is-pending' : '');
+  if (role === 'assistant' && !pending) {
+    renderAssistantMarkdown(bubble, content);
+  } else {
+    bubble.textContent = content;
+  }
+  row.appendChild(bubble);
+  aiMessages.appendChild(row);
+  return bubble;
+}
+
+function renderConversation(extraMessages = []) {
+  aiMessages.replaceChildren();
+  const history = activeQuestion ? (conversations.get(activeQuestion.id) || []) : [];
+  if (history.length === 0 && extraMessages.length === 0) {
+    appendMessage('assistant', emptyConversationMessage);
+  } else {
+    [...history, ...extraMessages].forEach(message => {
+      appendMessage(message.role, message.content, message.pending);
+    });
+  }
+  aiMessages.scrollTop = aiMessages.scrollHeight;
+}
+
+document.querySelectorAll('.btn-ai-tutor').forEach(button => {
+  button.addEventListener('click', () => {
+    activeQuestion = {
+      id: button.dataset.questionId,
+      label: button.dataset.questionLabel,
+      url: button.dataset.chatUrl,
+    };
+    answerWorkspace.classList.add('ai-open');
+    aiPanel.setAttribute('aria-hidden', 'false');
+    aiQuestionLabel.textContent = activeQuestion.label;
+    renderConversation();
+    aiPrompt.focus();
+  });
+});
+
+document.getElementById('ai-close-button').addEventListener('click', () => {
+  answerWorkspace.classList.remove('ai-open');
+  aiPanel.setAttribute('aria-hidden', 'true');
+});
+
+aiPrompt.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    aiForm.requestSubmit();
+  }
+});
+
+aiForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!activeQuestion || aiBusy) return;
+  const prompt = aiPrompt.value.trim();
+  if (!prompt) return;
+
+  const question = { ...activeQuestion };
+  const history = conversations.get(question.id) || [];
+  aiBusy = true;
+  aiPrompt.value = '';
+  aiPrompt.disabled = true;
+  aiSendButton.disabled = true;
+  renderConversation([{ role: 'user', content: prompt }]);
+  const streamingBubble = appendMessage('assistant', '正在思考……', true);
+  aiMessages.scrollTop = aiMessages.scrollHeight;
+
+  try {
+    const response = await fetch(question.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+      },
+      body: JSON.stringify({ prompt, history }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'AI 服务暂时不可用');
+    }
+    if (!response.body) throw new Error('浏览器无法读取 AI 流式响应');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let answer = '';
+    let streamError = '';
+    let renderFrame = null;
+
+    const scheduleMarkdownRender = () => {
+      if (renderFrame !== null) return;
+      renderFrame = window.requestAnimationFrame(() => {
+        renderFrame = null;
+        if (activeQuestion && activeQuestion.id === question.id) {
+          streamingBubble.classList.remove('is-pending');
+          renderAssistantMarkdown(streamingBubble, answer);
+          aiMessages.scrollTop = aiMessages.scrollHeight;
+        }
+      });
+    };
+
+    const consumeLine = line => {
+      if (!line.trim()) return;
+      const message = JSON.parse(line);
+      if (message.error) {
+        streamError = message.error;
+        return;
+      }
+      if (typeof message.delta === 'string') {
+        answer += message.delta;
+        scheduleMarkdownRender();
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      lines.forEach(consumeLine);
+      if (done) break;
+    }
+    if (buffer) consumeLine(buffer);
+    if (renderFrame !== null) window.cancelAnimationFrame(renderFrame);
+    if (streamError) throw new Error(streamError);
+    if (!answer.trim()) throw new Error('AI 服务没有返回有效内容');
+    if (activeQuestion && activeQuestion.id === question.id) {
+      streamingBubble.classList.remove('is-pending');
+      renderAssistantMarkdown(streamingBubble, answer);
+    }
+
+    conversations.set(question.id, [
+      ...history,
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: answer },
+    ].slice(-12));
+    if (activeQuestion && activeQuestion.id === question.id) renderConversation();
+  } catch (error) {
+    if (activeQuestion && activeQuestion.id === question.id) {
+      renderConversation([
+        { role: 'user', content: prompt },
+        { role: 'error', content: error.message || 'AI 服务暂时不可用' },
+      ]);
+    }
+  } finally {
+    aiBusy = false;
+    aiPrompt.disabled = false;
+    aiSendButton.disabled = false;
+    if (activeQuestion && activeQuestion.id === question.id) aiPrompt.focus();
+  }
+});
+</script>
+{% endblock %}

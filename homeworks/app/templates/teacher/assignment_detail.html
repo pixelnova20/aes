@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ assignment.title }}{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>{{ assignment.title }}</h2>
+  <div>
+    <button type="button" class="btn btn-sm btn-secondary" data-fallback-url="{{ url_for('teacher.dashboard') }}" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = this.dataset.fallbackUrl; }">返回</button>
+    {% if assignment.status == 'draft' %}
+    <a href="{{ url_for('teacher.edit_assignment', assignment_id=assignment.id) }}" class="btn btn-sm btn-primary">编辑</a>
+    <form method="post" action="{{ url_for('teacher.publish_draft', assignment_id=assignment.id) }}" class="inline-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-success">发布</button>
+    </form>
+    <form method="post" action="{{ url_for('teacher.delete_assignment', assignment_id=assignment.id) }}" class="inline-form" onsubmit='return confirm({{ ("你发布的作业已经有学生作答，删除作业将连带删除学生的答案、附件和批改记录。确认继续删除吗？" if has_submissions else "确认删除草稿“" ~ assignment.title ~ "”吗？此操作无法撤销。")|tojson }});'>
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-danger">删除草稿</button>
+    </form>
+    {% elif assignment.status == 'published' %}
+    <form method="post" action="{{ url_for('teacher.withdraw_assignment', assignment_id=assignment.id) }}" class="inline-form" onsubmit="return confirm('确认撤回作业“{{ assignment.title }}”吗？撤回后学生将无法查看或提交，已有作答和批改记录会保留。');">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-warning">撤回</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+<div class="card">
+  <p><strong>课程：</strong>{{ assignment.course.name }} · <strong>章节：</strong>第{{ assignment.chapter.chapter_number }}章</p>
+  <p><strong>状态：</strong><span class="badge badge-{{ assignment.status }}">{{ assignment.status_label }}</span></p>
+  <p><strong>截止时间：</strong>{{ assignment.due_at|dt }}</p>
+  {% if assignment.description %}<p><strong>说明：</strong>{{ assignment.description }}</p>{% endif %}
+  {% if assignment.status == 'draft' and has_submissions %}<p class="text-muted">该草稿保留了学生作答记录，因此题目不可修改；删除作业将连带删除学生的答案、附件和批改记录。</p>{% endif %}
+</div>
+
+<div class="card">
+  <h3>学生列表</h3>
+  <table class="table">
+    <thead><tr><th>姓名</th><th>邮箱</th><th>提交状态</th><th>分数</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for student, submission, grade in rows %}
+      <tr>
+        <td>{{ student.name }}</td>
+        <td>{{ student.email }}</td>
+        <td>
+          <span class="badge badge-{{ submission.status if submission else 'not_started' }}">{{ submission.status_label if submission else '未开始' }}</span>
+          {% if submission and submission.is_late %}<span class="badge badge-closed" style="margin-left:4px;">迟交</span>{% endif %}
+        </td>
+        <td>{{ grade.score if grade and grade.status == 'submitted' else '—' }}</td>
+        <td class="table-actions">
+          {% if assignment.status in ('published', 'closed') and submission and submission.status in ('submitted', 'graded') %}
+          <a href="{{ url_for('teacher.grade_student', assignment_id=assignment.id, student_id=student.id) }}" class="btn btn-sm btn-primary">批改</a>
+          {% if assignment.status == 'published' %}
+          <form method="post" action="{{ url_for('teacher.reopen_submission', assignment_id=assignment.id, student_id=student.id) }}" class="inline-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-warning" onclick="return confirm('确认开放重交？')">开放重交</button>
+          </form>
+          {% endif %}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

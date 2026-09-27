@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+apps/*/node_modules/
+
+# Build output
+build/
+apps/*/dist/
+apps/server/src/build/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.local
+
+# Logs & archives
+*.log
+*.tgz
+
+# Test coverage
+coverage/
+
+# OS metadata
+.DS_Store
+
+# Student runtime data
+student-workspace/
+
+# Claude Code / IDE config
+.codex/
+.claude/
+.agents/
+AGENTS.md
+CLAUDE.md

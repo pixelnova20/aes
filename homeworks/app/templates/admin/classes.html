@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}班级管理{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>班级管理</h2>
+  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <p class="text-muted">班级由统一系统的邀请码或教师控制台创建；超级管理员可在此维护。</p>
+
+  <table class="table">
+    <thead><tr><th>ID</th><th>名称</th><th>课程</th><th>人数</th><th>上限</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for k in classes %}
+      <tr>
+        <td>{{ k.id }}</td>
+        <td>{{ k.name }}</td>
+        <td>{{ k.course.name }}</td>
+        <td>{{ k.current_count }}</td>
+        <td>{{ k.capacity }}</td>
+        <td>{{ '启用' if k.enabled else '禁用' }}</td>
+        <td>{{ k.created_at|dt }}</td>
+        <td class="table-actions">
+          <form method="post" action="{{ url_for('admin.update_class', class_id=k.id) }}" class="inline-form" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="text" name="name" class="form-control" value="{{ k.name }}" style="width:120px;">
+            <select name="course_id" class="form-control" style="width:140px;">
+              {% for c in courses %}
+              <option value="{{ c.id }}" {% if c.id == k.course_id %}selected{% endif %}>{{ c.name }}</option>
+              {% endfor %}
+            </select>
+            <input type="number" name="capacity" class="form-control" value="{{ k.capacity }}" style="width:70px;">
+            <label><input type="checkbox" name="enabled" {% if k.enabled %}checked{% endif %}> 启用</label>
+            <button type="submit" class="btn btn-sm btn-primary">更新</button>
+            <button type="submit" name="action" value="delete" class="btn btn-sm btn-danger" onclick="return confirm('确认删除？')">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

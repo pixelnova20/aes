@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}章节与习题{% endblock %}
+{% block content %}
+<div class="card-header">
+  <div>
+    <h2>章节与习题</h2>
+    {% if current_class %}<p class="text-muted">当前班级：{{ current_class.name }} · {{ selected_course.name }}</p>{% endif %}
+  </div>
+  <a href="{{ url_for('teacher.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+
+{% if not current_class %}
+<div class="card"><p class="text-muted">尚未确定当前班级，请返回 AES 服务门户选择工作班级后重新进入 Homeworks。</p></div>
+{% else %}
+<div class="card">
+  <h3>新增章节</h3>
+  <form method="post" action="{{ url_for('teacher.create_chapter', course_id=selected_course.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div class="chapter-create-row">
+      <div>
+        <label for="chapter_number">章节号</label>
+        <input id="chapter_number" type="number" min="1" name="chapter_number" class="form-control" required>
+      </div>
+      <div>
+        <label for="chapter_title">章节标题</label>
+        <input id="chapter_title" type="text" name="title" class="form-control">
+      </div>
+      <button type="submit" class="btn btn-primary">新增章节</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>课程章节</h3>
+    <span class="text-muted">共 {{ chapters|length }} 章</span>
+  </div>
+  {% if chapters %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>章节</th><th>标题</th><th>题库状态</th><th>习题</th><th>操作</th></tr></thead>
+      <tbody>
+        {% for chapter in chapters %}
+        <tr>
+          <td>第 {{ chapter.chapter_number }} 章</td>
+          <td>{{ chapter.title or '未命名章节' }}</td>
+          <td><span class="badge badge-{{ 'published' if chapter.parse_status == 'parsed' else 'saved' if chapter.parse_status == 'parse_failed' else 'not_started' }}">{{ chapter.parse_status_label }}</span></td>
+          <td><a href="{{ url_for('teacher.chapter_questions', chapter_id=chapter.id) }}">{{ question_counts.get(chapter.id, 0) }} 道，进入习题</a></td>
+          <td class="table-actions">
+            <form method="post" action="{{ url_for('teacher.update_chapter', chapter_id=chapter.id) }}" class="chapter-edit-form">
+              <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <input type="number" min="1" name="chapter_number" class="form-control" value="{{ chapter.chapter_number }}" aria-label="章节号">
+              <input type="text" name="title" class="form-control" value="{{ chapter.title or '' }}" aria-label="章节标题">
+              <button type="submit" class="btn btn-sm btn-primary">保存</button>
+              <button type="submit" name="action" value="delete" class="btn btn-sm btn-danger" onclick="return confirm('确认删除第 {{ chapter.chapter_number }} 章及其未发布习题吗？')">删除</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted">当前课程还没有章节。</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

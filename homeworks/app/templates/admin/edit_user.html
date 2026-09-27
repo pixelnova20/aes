@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}编辑用户{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>编辑用户 — {{ user.email }}</h2>
+  <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card" style="max-width:640px;">
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div class="form-group">
+      <label>姓名</label>
+      <input type="text" name="name" class="form-control" value="{{ user.name }}">
+    </div>
+    <div class="form-group">
+      <label>角色</label>
+      <select name="role" class="form-control">
+        <option value="teacher" {% if user.role=='teacher' %}selected{% endif %}>教师</option>
+        <option value="ta" {% if user.role=='ta' %}selected{% endif %}>助教</option>
+        <option value="student" {% if user.role=='student' %}selected{% endif %}>学生</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>学号</label>
+      <input type="text" name="student_no" class="form-control" value="{{ user.student_no or '' }}" placeholder="仅限数字和英文字母">
+    </div>
+    {% if user.upload_dir %}
+    <div class="form-group">
+      <label>上传目录</label>
+      <input type="text" class="form-control" value="{{ user.upload_dir }}" disabled>
+    </div>
+    {% endif %}
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="enabled" {% if user.enabled %}checked{% endif %}>
+        启用账号
+      </label>
+    </div>
+    <div class="form-group">
+      <label>班级角色分配（勾选班级后选择角色，未勾选的班级不分配角色）</label>
+      <div style="border:1px solid #ddd;border-radius:4px;padding:10px;max-height:200px;overflow-y:auto;">
+        {% for klass in classes %}
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <label style="width:24px;">
+            <input type="checkbox" name="enabled_class_ids" value="{{ klass.id }}"
+              {% if user_class_roles.get(klass.id) %}checked{% endif %}>
+          </label>
+          <span style="flex:1;">{{ klass.name }}（{{ klass.course.name }}）</span>
+          <select name="role_{{ klass.id }}" style="width:80px;font-size:12px;">
+            <option value="student" {% if user_class_roles.get(klass.id) == 'student' %}selected{% endif %}>学生</option>
+            <option value="ta" {% if user_class_roles.get(klass.id) == 'ta' %}selected{% endif %}>助教</option>
+            <option value="teacher" {% if user_class_roles.get(klass.id) == 'teacher' %}selected{% endif %}>教师</option>
+          </select>
+        </div>
+        {% endfor %}
+        <p class="text-muted" style="font-size:12px;margin-top:4px;">勾选复选框并选择角色，未勾选不分配。每个班级只能分配一个角色。</p>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">保存</button>
+  </form>
+</div>
+{% endblock %}

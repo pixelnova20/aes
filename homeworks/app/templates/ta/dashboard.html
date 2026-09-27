@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}助教首页{% endblock %}
+{% block content %}
+<h1>助教控制台</h1>
+<div class="nav-pills">
+  <a href="{{ url_for('ta.assignments') }}">可批改作业</a>
+</div>
+{% if not klass %}
+<div class="card"><p class="text-muted">你尚未关联任何班级。</p></div>
+{% else %}
+<div class="grid-2">
+  {% for a in assignments %}
+  <div class="card">
+    <h3><a href="{{ url_for('ta.assignment_detail', assignment_id=a.id) }}">{{ a.title }}</a></h3>
+    <p class="text-muted">{{ a.course.name }} · 第{{ a.chapter.chapter_number }}章</p>
+    <p>发布教师：{{ a.publisher.name }}</p>
+    <p><span class="badge badge-{{ a.status }}">{{ a.status_label }}</span></p>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

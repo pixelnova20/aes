@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}邀请码管理{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>邀请码管理</h2>
+  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <h3>生成邀请码</h3>
+  <form method="post" class="mb-16">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div style="display:flex;gap:10px;align-items:end;">
+      <div style="width:200px"><label>所属班级</label>
+        <select name="class_id" class="form-control">
+          {% for k in classes %}<option value="{{ k.id }}">{{ k.name }}（{{ k.course.name }}）</option>{% endfor %}
+        </select>
+      </div>
+      <div style="width:100px"><label>使用上限</label><input type="number" name="capacity" class="form-control" placeholder="继承班级上限"></div>
+      <div style="width:200px"><label>过期时间</label><input type="datetime-local" name="expires_at" class="form-control"></div>
+      <div><button type="submit" class="btn btn-primary">生成</button></div>
+    </div>
+  </form>
+
+  <table class="table">
+    <thead><tr><th>ID</th><th>邀请码</th><th>课程</th><th>班级</th><th>已用/上限</th><th>状态</th><th>过期时间</th><th>创建时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for c in codes %}
+      <tr>
+        <td>{{ c.id }}</td>
+        <td><strong>{{ c.code }}</strong></td>
+        <td>{{ c.course_name or (c.klass.course.name if c.klass else '—') }}</td>
+        <td>{{ c.klass.name if c.klass else (c.class_name or '—') }}</td>
+        <td>{{ c.used_count }} / {{ c.capacity or (c.klass.capacity if c.klass else '—') }}</td>
+        <td><span class="badge badge-{{ 'published' if c.enabled else 'closed' }}">{{ '启用' if c.enabled else '停用' }}</span></td>
+        <td>{{ c.expires_at|dt }}</td>
+        <td>{{ c.created_at|dt }}</td>
+        <td class="table-actions">
+          <form method="post" action="{{ url_for('admin.update_invite_code', code_id=c.id) }}" class="inline-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm {{ 'btn-warning' if c.enabled else 'btn-success' }}">{{ '停用' if c.enabled else '启用' }}</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

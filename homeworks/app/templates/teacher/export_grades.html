@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}导出成绩{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>导出成绩报表</h2>
+  <a href="{{ url_for('teacher.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card" style="max-width:500px;">
+  <p>请选择要导出的班级：</p>
+  {% if classes %}
+  <ul style="list-style:none;padding:0;">
+    {% for cls in classes %}
+    <li style="margin-bottom:10px;">
+      <a href="{{ url_for('teacher.export_grades', class_id=cls.id) }}" class="btn btn-primary">
+        {{ cls.name }}（{{ cls.course.name }}）
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-muted">你尚未关联任何班级。</p>
+  {% endif %}
+</div>
+{% endblock %}

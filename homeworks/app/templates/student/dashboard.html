@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}学生首页{% endblock %}
+{% block content %}
+<h1>我的作业</h1>
+<div class="nav-pills">
+  <a href="{{ url_for('student.grades') }}">我的成绩</a>
+</div>
+{% if classes %}
+<p class="text-muted mt-8">所属班级：{% for c in classes %}{{ c.name }}{% if not loop.last %}、{% endif %}{% endfor %}</p>
+{% endif %}
+
+<h2 class="mt-16">待完成</h2>
+{% if todo %}
+<div class="grid-2">
+  {% for a, sub, status in todo %}
+  <div class="card">
+    <h3><a href="{{ url_for('student.answer_page', assignment_id=a.id) }}">{{ a.title }}</a></h3>
+    <p class="text-muted">{{ a.course.name }} · 第{{ a.chapter.chapter_number }}章 · {{ a.klass.name }}</p>
+    <p>截止：{{ a.due_at|dt }}{% if a.is_past_due and status != 'submitted' %} <span style="color:#e74c3c;">⚠ 已截止</span>{% endif %}</p>
+    <span class="badge badge-{{ status }}">{{ {'not_started': '未开始', 'saved': '暂存', 'submitted': '已提交'}.get(status, status) }}</span>
+    {% if sub and sub.is_late %}<span class="badge badge-closed" style="margin-left:4px;">迟交</span>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><p class="text-muted">暂无待完成作业</p></div>
+{% endif %}
+
+<h2 class="mt-16">已完成</h2>
+{% if completed %}
+<div class="grid-2">
+  {% for a, sub in completed %}
+  <div class="card">
+    <h3><a href="{{ url_for('student.answer_page', assignment_id=a.id) }}">{{ a.title }}</a></h3>
+    <p class="text-muted">{{ a.course.name }} · 第{{ a.chapter.chapter_number }}章 · {{ a.klass.name }}</p>
+    <span class="badge badge-submitted">已提交</span>
+    {% if a.status != 'published' %}<span class="badge badge-draft">作业已撤回</span>{% endif %}
+    {% if sub.is_late %}<span class="badge badge-closed">迟交</span>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><p class="text-muted">暂无已完成作业</p></div>
+{% endif %}
+
+{% if graded %}
+<h2 class="mt-16">已批改</h2>
+<div class="grid-2">
+  {% for a, sub, grade in graded %}
+  <div class="card">
+    <h3><a href="{{ url_for('student.answer_page', assignment_id=a.id) }}">{{ a.title }}</a></h3>
+    <p class="text-muted">{{ a.course.name }} · 第{{ a.chapter.chapter_number }}章 · {{ a.klass.name }}</p>
+    <p>分数：<strong>{{ grade.score }}</strong></p>
+    {% if a.status != 'published' %}<span class="badge badge-draft">作业已撤回</span>{% endif %}
+    {% if sub.is_late %}<span class="badge badge-closed">迟交</span>{% endif %}
+    {% if grade.comment %}<p>评价：{{ grade.comment }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

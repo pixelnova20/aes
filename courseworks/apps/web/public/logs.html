@@ -1,0 +1,230 @@
+<!doctype html>
+<!--
+  文件作用：提供 Courseworks 调试日志查看页面，定时读取 /api/logs 并按日志阶段着色展示。
+  模块位置：apps/web/public，属于独立调试页面。
+  重要函数：parseLine() 解析日志列，classifyStage() 分类日志，renderLine() 生成 HTML，fetchLogs() 拉取日志，schedule() 管理轮询。
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Courseworks — Debug Logs</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --dim: #656d76;
+    --green: #1a7f37;
+    --red: #cf222e;
+    --yellow: #9a6700;
+    --blue: #0969da;
+    --tag-bg: #eaeef2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 13px; line-height: 1.6;
+    display: flex; flex-direction: column; height: 100vh;
+    -webkit-user-select: text; user-select: text;
+  }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; font-weight: 600; color: var(--text); }
+  header .controls { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+  header select, header button, header label {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 10px; border-radius: 5px;
+    font-family: inherit; font-size: 12px; cursor: pointer;
+  }
+  header button:hover { background: var(--tag-bg); }
+  .status { font-size: 12px; color: var(--dim); }
+  .status.connected { color: var(--green); }
+  .status.error { color: var(--red); }
+  #log-container {
+    flex: 1; overflow-y: auto; padding: 8px 0;
+  }
+  .log-line {
+    padding: 2px 16px; white-space: pre-wrap; word-break: break-all;
+    border-bottom: 1px solid #f0f0f0; transition: background 0.15s;
+  }
+  .log-line:hover { background: var(--surface); }
+  .log-line.input { color: #1a7f37; }
+  .log-line.auto-reply { color: #0969da; font-weight: 600; }
+  .log-line.llm-request { color: #8250df; }
+  .log-line.llm-response { color: #cf222e; }
+  .log-line.http-ok { color: var(--green); }
+  .log-line.http-err { color: var(--red); background: #fff0f0; }
+  .log-line.system { color: var(--dim); }
+  .timestamp { color: var(--dim); margin-right: 8px; white-space: nowrap; }
+  .email { color: #656d76; margin-right: 12px; white-space: nowrap; }
+  .stage { margin-right: 12px; font-weight: 600; white-space: nowrap; }
+  .location { color: var(--dim); margin-right: 8px; font-size: 11px; white-space: nowrap; }
+  footer {
+    background: var(--surface); border-top: 1px solid var(--border);
+    padding: 6px 16px; font-size: 11px; color: var(--dim); flex-shrink: 0;
+    display: flex; justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>📋 Courseworks Debug Logs</h1>
+  <div class="controls">
+    <label>Lines: <select id="lines">
+      <option value="50">50</option>
+      <option value="100">100</option>
+      <option value="200" selected>200</option>
+      <option value="500">500</option>
+    </select></label>
+    <label>Auto: <select id="interval">
+      <option value="0">off</option>
+      <option value="1">1s</option>
+      <option value="2" selected>2s</option>
+      <option value="5">5s</option>
+    </select></label>
+    <button id="refresh-btn">⟳ Refresh</button>
+    <span id="status" class="status">connecting...</span>
+  </div>
+</header>
+<div id="log-container"></div>
+<footer>
+  <span>Only visible when LOG_VIEWER_ENABLED=true. Port 9090.</span>
+  <span id="footer-time"></span>
+</footer>
+<script>
+const container = document.getElementById("log-container");
+const statusEl = document.getElementById("status");
+const footerTime = document.getElementById("footer-time");
+let timer = null;
+
+/**
+ * 函数功能：把后端制表符分隔的日志行解析为时间、账号、阶段、位置和消息字段。
+ * 输入参数：line 是后端返回的单条日志字符串。
+ * 输出参数：返回供渲染器消费的结构化日志对象，并兼容没有 location 的旧格式。
+ * 调用关系：由 renderLine() 调用，内部使用字符串拆分和切片完成解析。
+ */
+function parseLine(line) {
+  // tab 分隔：timestamp\temail\tstage\tlocation\tmessage
+  const parts = line.split("\t");
+  if (parts.length >= 5) {
+    return { ts: parts[0], email: parts[1], stage: parts[2], loc: parts[3], msg: parts.slice(4).join("\t") };
+  }
+  if (parts.length === 4) {
+    // 兼容旧格式（无 location 列）
+    return { ts: parts[0], email: parts[1], stage: parts[2], loc: "", msg: parts.slice(3).join("\t") };
+  }
+  return { ts: "", email: "", stage: "", loc: "", msg: line };
+}
+
+/**
+ * 函数功能：把后端日志阶段映射为页面使用的 CSS 分类名。
+ * 输入参数：stage 是日志记录中的阶段标识。
+ * 输出参数：返回对应 CSS class；未知阶段返回空字符串。
+ * 调用关系：由 renderLine() 调用，用于决定每一行日志的颜色和强调方式。
+ */
+function classifyStage(stage) {
+  if (stage === "input") return "input";
+  if (stage === "auto-reply") return "auto-reply";
+  if (stage === "llm-request") return "llm-request";
+  if (stage === "llm-response") return "llm-response";
+  if (stage === "http") {
+    return "http-ok"; // actual determination below
+  }
+  if (stage === "system") return "system";
+  return "";
+}
+
+/**
+ * 函数功能：把一条原始日志转换为经过 HTML 转义的日志行标记。
+ * 输入参数：line 是待展示的原始日志字符串。
+ * 输出参数：返回可写入日志容器的 HTML 字符串。
+ * 调用关系：由 fetchLogs() 的数组映射调用；内部调用 parseLine()、classifyStage() 和 esc()。
+ */
+function renderLine(line) {
+  const { ts, email, stage, loc, msg } = parseLine(line);
+  let cls = classifyStage(stage);
+  if (stage === "http") {
+    cls = (msg.includes("❌") || msg.includes("→ 4") || msg.includes("→ 5")) ? "http-err" : "http-ok";
+  }
+  const locSpan = loc ? `<span class="location">${esc(loc)}</span>` : "";
+  return `<div class="log-line ${cls}"><span class="timestamp">${ts}</span><span class="email">${esc(email)}</span><span class="stage">${stage}</span>${locSpan}${esc(msg)}</div>`;
+}
+
+/**
+ * 函数功能：转义日志文本中的 HTML 特殊字符，防止日志内容被解释为页面标签。
+ * 输入参数：s 是待转义的日志字段字符串。
+ * 输出参数：返回可安全嵌入 HTML 的字符串。
+ * 调用关系：由 renderLine() 调用。
+ */
+function esc(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+/**
+ * 函数功能：从后端读取最新日志，更新日志区域、连接状态和最后刷新时间。
+ * 输入参数：无显式参数；读取行数选择框和当前文本选择状态。
+ * 输出参数：返回 Promise；成功时更新 DOM，失败时把错误写入状态区域。
+ * 调用关系：由首次页面加载、手动刷新、筛选变化和 schedule() 创建的定时器调用。
+ */
+async function fetchLogs() {
+  try {
+    // 用户正在选中文字时不刷新，避免选中被清除
+    const sel = window.getSelection();
+    if (sel && sel.toString().length > 0) return;
+
+    const lines = document.getElementById("lines").value;
+    const resp = await fetch(`/api/logs?lines=${lines}`);
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    const data = await resp.json();
+    if (!data.enabled) {
+      container.innerHTML = '<div class="log-line" style="color:var(--yellow)">Log viewer is disabled. Set LOG_VIEWER_ENABLED=true in .env to enable.</div>';
+      statusEl.textContent = "disabled";
+      statusEl.className = "status";
+      return;
+    }
+    // 只在用户已经在底部时才自动滚动，否则保持当前位置
+    const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+    container.innerHTML = data.lines.map(renderLine).join("");
+    if (wasAtBottom) container.scrollTop = container.scrollHeight;
+    footerTime.textContent = new Date().toLocaleTimeString();
+    statusEl.textContent = `${data.lines.length} lines`;
+    statusEl.className = "status connected";
+  } catch (e) {
+    statusEl.textContent = `error: ${e.message}`;
+    statusEl.className = "status error";
+  }
+}
+
+/**
+ * 函数功能：按照页面选择的秒数重新建立或关闭日志自动刷新定时器。
+ * 输入参数：无显式参数；读取 interval 选择框和模块级 timer。
+ * 输出参数：无返回值；通过更新 timer 改变后续轮询行为。
+ * 调用关系：由页面初始化和 interval.onchange 处理器调用；定时器回调 fetchLogs()。
+ */
+function schedule() {
+  if (timer) clearInterval(timer);
+  const sec = Number(document.getElementById("interval").value);
+  if (sec > 0) timer = setInterval(fetchLogs, sec * 1000);
+}
+
+document.getElementById("refresh-btn").onclick = fetchLogs;
+/**
+ * 函数功能：处理自动刷新间隔变化，重建定时器并立即刷新一次日志。
+ * 输入参数：浏览器 onchange 事件由 DOM 自动提供，本处理器无需读取事件对象。
+ * 输出参数：无返回值，通过调用 schedule() 和 fetchLogs() 更新页面。
+ * 调用关系：由 interval 选择框发生变化时调用。
+ */
+document.getElementById("interval").onchange = () => { schedule(); fetchLogs(); };
+document.getElementById("lines").onchange = fetchLogs;
+
+fetchLogs();
+schedule();
+</script>
+</body>
+</html>

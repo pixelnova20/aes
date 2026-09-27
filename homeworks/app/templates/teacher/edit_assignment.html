@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}编辑草稿{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>编辑草稿</h2>
+  <button type="button" class="btn btn-sm btn-secondary" data-fallback-url="{{ url_for('teacher.dashboard') }}" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = this.dataset.fallbackUrl; }">返回</button>
+</div>
+
+<div class="card">
+  <p><strong>班级：</strong>{{ assignment.klass.name }} · <strong>课程：</strong>{{ assignment.course.name }} · <strong>章节：</strong>第{{ assignment.chapter.chapter_number }}章 {{ assignment.chapter.title or '' }}</p>
+  {% if has_submissions %}
+  <div class="flash flash-info">该作业已有学生作答记录。你可以修改标题、说明和截止时间，题目内容已锁定。</div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('teacher.update_assignment', assignment_id=assignment.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:240px"><label>作业标题</label><input type="text" name="title" class="form-control" value="{{ assignment.title }}" required></div>
+      <div style="width:220px"><label>截止时间</label><input type="datetime-local" name="due_at" class="form-control" value="{{ assignment.due_at.strftime('%Y-%m-%dT%H:%M') if assignment.due_at else '' }}"></div>
+    </div>
+    <div class="form-group"><label>说明</label><textarea name="description" class="form-control">{{ assignment.description or '' }}</textarea></div>
+
+    <h3>作业题目</h3>
+    {% if has_submissions %}
+      {% for q in assignment.assignment_questions %}
+      <div class="question-item {{ q.type }}">
+        <div style="font-weight:600;">第 {{ q.question_number }} 题 · {{ q.type_label }}</div>
+        <div class="q-stem">{{ q.stem_html|content_html }}</div>
+        {% if q.type == 'choice' %}
+        <div class="options">
+          {% for opt in q.snapshot_options %}
+          <div class="question-option"><strong>{{ opt.label }}.</strong><div>{{ opt.content_html|content_html }}</div></div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+      {% for section in question_sections %}
+      <section class="question-section" data-question-type="{{ section.type }}">
+        <div class="question-section-heading">
+          <h3>{{ section.label }}</h3>
+          <span>{{ section.questions|length }} 道</span>
+        </div>
+        {% for q in section.questions %}
+        <div class="question-item {{ q.type }}">
+          <label style="font-weight:600;">
+            <input type="checkbox" name="question_ids" value="{{ q.id }}" {% if q.id in selected_question_ids %}checked{% endif %}>
+            第 {{ q.question_number }} 题
+          </label>
+          <div class="q-stem">{{ q.stem_html|content_html }}</div>
+          {% if q.type == 'choice' %}
+          <div class="options">
+            {% for opt in q.options %}
+            <div class="question-option"><strong>{{ opt.label }}.</strong><div>{{ opt.content_html|content_html }}</div></div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </section>
+      {% endfor %}
+    {% endif %}
+
+    <div class="mt-16">
+      <button type="button" class="btn btn-secondary" data-fallback-url="{{ url_for('teacher.dashboard') }}" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = this.dataset.fallbackUrl; }">取消</button>
+      <button type="submit" name="action" value="draft" class="btn btn-primary">保存修改</button>
+      <button type="submit" name="action" value="publish" class="btn btn-success">保存并发布</button>
+    </div>
+  </form>
+  <form method="post" action="{{ url_for('teacher.delete_assignment', assignment_id=assignment.id) }}" class="mt-16" onsubmit='return confirm({{ ("你发布的作业已经有学生作答，删除作业将连带删除学生的答案、附件和批改记录。确认继续删除吗？" if has_submissions else "确认删除草稿“" ~ assignment.title ~ "”吗？此操作无法撤销。")|tojson }});'>
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-danger">删除草稿</button>
+  </form>
+</div>
+{% endblock %}

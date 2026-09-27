@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}课程幻灯片{% endblock %}
+{% block content %}
+<div class="library-shell">
+  <section class="library-heading">
+    <div>
+      <span class="eyebrow">SLIDESHOW LIBRARY</span>
+      <h1>课程幻灯片</h1>
+      {% if current_user.role == 'teacher' %}
+      <p>上传课件，系统会自动转换为适合浏览器阅读的页面。</p>
+      {% elif current_user.class_id %}
+      <p>当前班级：<strong>{{ current_user.course_name }} / {{ current_user.class_name }}</strong></p>
+      {% else %}
+      <p>当前账号尚未关联班级，请返回服务门户切换班级。</p>
+      {% endif %}
+    </div>
+    <span class="deck-count">{{ presentations|length }} 份课件</span>
+  </section>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="flash-stack" role="status">
+      {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endwith %}
+
+  {% if current_user.role == 'teacher' %}
+  <section class="upload-band" aria-labelledby="upload-heading">
+    <div>
+      <span class="eyebrow">教师工具</span>
+      <h2 id="upload-heading">上传 PPT</h2>
+    </div>
+    {% if classes %}
+    <form method="post" action="{{ url_for('slideshow.upload_presentation') }}" enctype="multipart/form-data" class="upload-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <label>
+        <span>标题</span>
+        <input name="title" maxlength="160" placeholder="例如：进程与线程" required>
+      </label>
+      <label>
+        <span>发布到班级</span>
+        <select name="class_id" required>
+          <option value="">请选择班级</option>
+          {% for class_item in classes %}
+          <option value="{{ class_item.class_id }}"{% if current_user.class_id == class_item.class_id %} selected{% endif %}>{{ class_item.course_name }} / {{ class_item.class_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="file-field">
+        <span>PPT 文件</span>
+        <input type="file" name="presentation" accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" required>
+      </label>
+      <button class="button button-primary" type="submit">上传并转换</button>
+    </form>
+    {% else %}
+    <p class="empty-inline">请先在服务门户的班级管理中创建班级，再上传课件。</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="deck-grid" aria-label="演示文稿列表">
+    {% for item in presentations %}
+      {% if item.status == 'ready' %}
+      <article class="deck-card">
+        <a class="deck-link" href="{{ url_for('slideshow.viewer', presentation_id=item.id) }}">
+          <div class="deck-cover">
+            <img src="{{ url_for('slideshow.slide_image', presentation_id=item.id, slide_index=0) }}" alt="{{ item.title }} 封面" loading="lazy">
+            <span>{{ item.slide_count }} 页</span>
+          </div>
+          <div class="deck-meta">
+            <small>{{ item.course_name }} / {{ item.class_name }}</small>
+            <h2>{{ item.title }}</h2>
+            <p>{{ item.original_filename }}</p>
+            <time>{{ item.updated_at[:10] }}</time>
+          </div>
+        </a>
+        {% if current_user.role == 'teacher' %}
+        <form class="deck-actions" method="post" action="{{ url_for('slideshow.remove_presentation', presentation_id=item.id) }}" onsubmit="return window.confirm('确定删除这份课件吗？原始 PPT 和已转换页面将一并删除，此操作无法撤销。')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button class="button button-danger" type="submit">删除</button>
+        </form>
+        {% endif %}
+      </article>
+      {% else %}
+      <article class="deck-card deck-failed">
+        <div class="deck-cover deck-cover-error"><span>转换失败</span></div>
+        <div class="deck-meta">
+          <small>{{ item.course_name }} / {{ item.class_name }}</small>
+          <h2>{{ item.title }}</h2>
+          <p>{{ item.error_message or '无法转换此文件。' }}</p>
+        </div>
+        {% if current_user.role == 'teacher' %}
+        <form class="deck-actions" method="post" action="{{ url_for('slideshow.remove_presentation', presentation_id=item.id) }}" onsubmit="return window.confirm('确定删除这份课件吗？原始 PPT 和转换记录将一并删除，此操作无法撤销。')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button class="button button-danger" type="submit">删除</button>
+        </form>
+        {% endif %}
+      </article>
+      {% endif %}
+    {% else %}
+    <div class="empty-library">
+      <span class="empty-glyph">▤</span>
+      <h2>还没有可阅读的课件</h2>
+      <p>{% if current_user.role == 'teacher' %}上传第一份 PPT 后，它会出现在这里。{% else %}教师发布课件后，它会出现在这里。{% endif %}</p>
+    </div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,7 @@
+Flask>=3.0
+gunicorn>=22.0
+SQLAlchemy>=2.0
+Markdown>=3.3
+Werkzeug>=3.0
+PyJWT>=2.8
+tomli>=2.0; python_version < "3.11"

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ code }}{% endblock %}
+{% block content %}
+<div class="error-page">
+  <strong>{{ code }}</strong>
+  <h1>{{ message }}</h1>
+  <a class="button button-primary" href="{{ url_for('slideshow.index') }}">返回课件列表</a>
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}课程管理{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>课程管理</h2>
+  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <form method="post" class="mb-16">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div class="form-group" style="display:flex;gap:10px;align-items:end;">
+      <div style="flex:1"><label>课程名称</label><input type="text" name="name" class="form-control" required></div>
+      <div style="flex:2"><label>描述</label><input type="text" name="description" class="form-control"></div>
+      <div><button type="submit" class="btn btn-primary">创建</button></div>
+    </div>
+  </form>
+
+  <table class="table">
+    <thead><tr><th>ID</th><th>名称</th><th>描述</th><th>章节</th><th>创建时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for c in courses %}
+      <tr>
+        <td>{{ c.id }}</td>
+        <td>{{ c.name }}</td>
+        <td>{{ c.description or '—' }}</td>
+        <td>
+          <a href="{{ url_for('admin.chapters', course_id=c.id) }}">章节管理</a>
+          <form method="post" action="{{ url_for('admin.import_course1_os', course_id=c.id) }}" class="inline-form" style="margin-left:8px;">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('确认一键导入 course1-os 所有章节？')">一键导入</button>
+          </form>
+        </td>
+        <td>{{ c.created_at|dt }}</td>
+        <td class="table-actions">
+          <form method="post" action="{{ url_for('admin.update_course', course_id=c.id) }}" class="inline-form" style="display:flex;gap:6px;align-items:center;">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="text" name="name" class="form-control" value="{{ c.name }}" style="width:160px;">
+            <button type="submit" class="btn btn-sm btn-primary">更新</button>
+            <button type="submit" name="action" value="delete" class="btn btn-sm btn-danger" onclick="return confirm('确认删除课程 {{ c.name }} 及其关联数据？')">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

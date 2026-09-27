@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}{{ presentation.title }}{% endblock %}
+{% block body_class %}viewer-body{% endblock %}
+{% block page %}
+<div class="viewer-app">
+  <header class="viewer-header">
+    <a class="icon-link" href="{{ url_for('slideshow.index') }}" title="返回课件列表" aria-label="返回课件列表">←</a>
+    <div class="viewer-title">
+      <strong>{{ presentation.title }}</strong>
+      <span>{{ presentation.course_name }} / {{ presentation.class_name }}</span>
+    </div>
+    <div class="viewer-header-actions">
+      <span id="header-page-indicator">1 / {{ presentation.slide_count }}</span>
+      <a class="button button-quiet" href="/portal">服务门户</a>
+    </div>
+  </header>
+
+  <div class="viewer-layout{% if current_user.role == 'student' %} student-chat-collapsible{% endif %}" id="viewer-layout">
+    <aside class="thumbnail-panel" aria-label="幻灯片缩略图">
+      <div class="panel-heading">
+        <strong>页面</strong>
+        <span>{{ presentation.slide_count }}</span>
+      </div>
+      <div class="thumbnail-list" id="thumbnail-list"></div>
+    </aside>
+
+    <main class="slide-column">
+      <div class="slide-fullscreen-target" id="fullscreen-target">
+        <div class="slide-stage" id="slide-stage">
+          <img id="current-slide" alt="当前幻灯片">
+          <div class="slide-image-error" id="slide-image-error" hidden>
+            <strong>页面图片加载失败</strong>
+            <span>请刷新页面后重试。</span>
+          </div>
+        </div>
+        <div class="slide-controls">
+          <button class="control-button" id="previous-slide" type="button">← <span>上一页</span></button>
+          <button class="control-button" id="fullscreen-button" type="button">⛶ <span>全屏</span></button>
+          <button class="control-button" id="next-slide" type="button"><span>下一页</span> →</button>
+          {% if current_user.role == 'student' %}
+          <button aria-controls="chat-panel" aria-expanded="false" class="control-button chat-open-button" id="chat-open-button" type="button">✦ <span>问 AI</span></button>
+          {% endif %}
+        </div>
+      </div>
+    </main>
+
+    <aside class="chat-panel" id="chat-panel" aria-label="AI 学习助手">
+      <div class="chat-heading">
+        <div class="chat-heading-copy">
+          <strong>问 AI</strong>
+          <span id="chat-slide-label">基于当前第 1 页</span>
+        </div>
+        <div class="chat-heading-actions">
+          <span class="ai-status-dot" title="使用服务门户中当前选择的 AI Provider"></span>
+          {% if current_user.role == 'student' %}
+          <button aria-label="关闭 AI 聊天" class="chat-close-button" id="chat-close-button" title="关闭 AI 聊天" type="button">×</button>
+          {% endif %}
+        </div>
+      </div>
+      <div class="chat-messages" id="chat-messages" aria-live="polite">
+        <div class="chat-empty" id="chat-empty">
+          <strong>这页有哪些重点？</strong>
+          <span>可以询问概念解释、页面总结，或它与前后内容的关系。</span>
+        </div>
+      </div>
+      <form class="chat-composer" id="chat-form">
+        <label for="chat-input">你的问题</label>
+        <textarea id="chat-input" maxlength="4000" rows="3" placeholder="询问当前幻灯片..." required></textarea>
+        <div>
+          <span id="chat-state">Enter 发送，Shift + Enter 换行</span>
+          <button class="button button-primary" id="chat-send" type="submit">发送</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+</div>
+<script id="presentation-data" type="application/json">{{ presentation_json|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/marked.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/purify.min.js') }}"></script>
+<script src="{{ url_for('static', filename='viewer.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,19 @@
+{
+  "name": "@all-together/management",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "../courseworks/node_modules/.bin/tsc -p tsconfig.json",
+    "check": "../courseworks/node_modules/.bin/tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/*.test.js"
+  }
+}

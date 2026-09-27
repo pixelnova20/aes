@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}作业总览{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>作业总览</h2>
+  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  <table class="table">
+    <thead><tr><th>ID</th><th>标题</th><th>课程</th><th>班级</th><th>发布教师</th><th>状态</th><th>截止时间</th><th>发布时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for a in assignments %}
+      <tr>
+        <td>{{ a.id }}</td>
+        <td>{{ a.title }}</td>
+        <td>{{ a.course.name }}</td>
+        <td>{{ a.klass.name }}</td>
+        <td>{{ a.publisher.name }}</td>
+        <td><span class="badge badge-{{ a.status }}">{{ a.status_label }}</span></td>
+        <td>{{ a.due_at|dt }}</td>
+        <td>{{ a.published_at|dt }}</td>
+        <td class="table-actions">
+          {% if a.status == 'published' %}
+          <form method="post" action="{{ url_for('admin.update_assignment', assignment_id=a.id) }}" style="display:inline;" onsubmit="return confirm('确认关闭作业 {{ a.title }} 吗？');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="close">
+            <button type="submit" class="btn btn-sm btn-warning">关闭</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('admin.update_assignment', assignment_id=a.id) }}" style="display:inline;" onsubmit="return confirm('确认删除作业 {{ a.title }} 吗？此操作不可撤销。');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="delete">
+            <button type="submit" class="btn btn-sm btn-danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,545 @@
+// 文件作用：定义 Courseworks 的 MySQL 数据模型、枚举、关系、索引和 Prisma Client 生成方式。
+// 模块位置：apps/server/prisma，属于后端统一持久化模型层。
+// 重要对象：User/Workspace 管理身份与工作区，AgentRun/Trace 记录执行，CourseTask 维护长期任务，Build/QEMU/Checkpoint 保存验证结果。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  super_admin
+  teacher
+  ta
+  student
+}
+
+enum AiProviderLevel {
+  high
+  medium
+  low
+}
+
+enum InviteCodeLevel {
+  level_1
+  level_2
+}
+
+enum WorkspaceStatus {
+  not_created
+  initializing
+  ready
+  failed
+}
+
+enum AgentRunStatus {
+  created
+  context_collecting
+  context_collected
+  planning
+  planned
+  designing
+  design_generated
+  patch_generating
+  patch_generated
+  waiting_user_confirmation
+  patch_applying
+  patch_applied
+  build_running
+  build_success
+  build_failed
+  qemu_running
+  qemu_success
+  qemu_failed
+  analyzing
+  completed
+  failed
+  cancelled
+  resource_limit_exceeded
+  idle_timeout
+}
+
+enum AgentStepStatus {
+  pending
+  running
+  success
+  failed
+}
+
+enum PatchPlanStatus {
+  generated
+  validation_failed
+  applied
+  failed
+}
+
+enum CheckpointStatus {
+  created
+  restored
+  failed
+}
+
+enum ExecutionStatus {
+  queued
+  running
+  success
+  failed
+  timeout
+  error
+  resource_limit_exceeded
+  idle_timeout
+}
+
+enum CourseTaskSessionStatus {
+  active
+  paused
+  completed
+}
+
+enum CourseSubtaskStatus {
+  active
+  blocked
+  done
+}
+
+enum AgentRunMode {
+  continue_subtask
+  new_subtask
+  reset_context_then_run
+}
+
+model User {
+  id                         String                      @id @default(cuid())
+  email                      String
+  passwordHash               String                      @map("password_hash")
+  name                       String?                     @db.VarChar(255)
+  role                       UserRole
+  studentNo                  String?                     @map("student_no") @db.VarChar(64)
+  courseName                 String?                     @map("course_name") @db.VarChar(255)
+  isActive                   Boolean                     @default(true) @map("is_active")
+  lastLoginAt                DateTime?                   @map("last_login_at")
+  createdAt                  DateTime                    @default(now()) @map("created_at")
+  updatedAt                  DateTime                    @updatedAt @map("updated_at")
+  inviteCodeId               String?                     @map("invite_code_id")
+  inviteCode                 InviteCode?                 @relation("InviteCodeMembers", fields: [inviteCodeId], references: [id])
+  currentClassInviteId       String?                     @map("current_class_invite_id")
+  currentClassInvite         InviteCode?                 @relation("TeacherCurrentClass", fields: [currentClassInviteId], references: [id], onDelete: SetNull)
+  workspace                  Workspace?
+  aiProviderSetting          AiProviderSetting?
+  inviteCodeUses             InviteCodeUse[]
+  managedInviteCodes         InviteCode[]                @relation("InviteCodeTeacher")
+  classAiProviderAssignments ClassAiProviderAssignment[] @relation("ClassAiProviderTeacher")
+  classAiTokenUsages         ClassAiTokenUsage[]
+  agentRuns                  AgentRun[]
+  courseTaskSessions         CourseTaskSession[]
+  workspaceActivityEvents    WorkspaceActivityEvent[]    @relation("WorkspaceActivityActor")
+
+  @@unique([email, inviteCodeId])
+  @@unique([studentNo, inviteCodeId])
+  @@index([email])
+  @@index([currentClassInviteId])
+  @@map("users")
+}
+
+model InviteCode {
+  id                   String                     @id @default(cuid())
+  code                 String                     @unique
+  description          String?                    @db.VarChar(255)
+  level                InviteCodeLevel            @default(level_1)
+  courseName           String?                    @map("course_name") @db.VarChar(255)
+  className            String?                    @map("class_name")
+  maxUses              Int                        @default(1) @map("max_uses")
+  usedCount            Int                        @default(0) @map("used_count")
+  expiresAt            DateTime?                  @map("expires_at")
+  isActive             Boolean                    @default(true) @map("is_active")
+  createdAt            DateTime                   @default(now()) @map("created_at")
+  updatedAt            DateTime                   @updatedAt @map("updated_at")
+  nextClassSequence    Int                        @default(1) @map("next_class_sequence")
+  teacherUserId        String?                    @map("teacher_user_id")
+  teacher              User?                      @relation("InviteCodeTeacher", fields: [teacherUserId], references: [id])
+  parentInviteCodeId   String?                    @map("parent_invite_code_id")
+  parentInviteCode     InviteCode?                @relation("InviteCodeHierarchy", fields: [parentInviteCodeId], references: [id])
+  childInviteCodes     InviteCode[]               @relation("InviteCodeHierarchy")
+  users                User[]                     @relation("InviteCodeMembers")
+  currentTeachers      User[]                     @relation("TeacherCurrentClass")
+  aiProviderAssignment ClassAiProviderAssignment?
+  uses                 InviteCodeUse[]
+
+  @@index([teacherUserId])
+  @@index([parentInviteCodeId])
+  @@map("invite_codes")
+}
+
+model InviteCodeUse {
+  id           String     @id @default(cuid())
+  inviteCodeId String     @map("invite_code_id")
+  userId       String     @map("user_id")
+  usedAt       DateTime   @default(now()) @map("used_at")
+  inviteCode   InviteCode @relation(fields: [inviteCodeId], references: [id])
+  user         User       @relation(fields: [userId], references: [id])
+
+  @@index([inviteCodeId])
+  @@index([userId])
+  @@map("invite_code_uses")
+}
+
+model Workspace {
+  id                      String                   @id @default(cuid())
+  userId                  String                   @unique @map("user_id")
+  workspaceUuid           String                   @unique @map("workspace_uuid")
+  path                    String
+  status                  WorkspaceStatus          @default(not_created)
+  osType                  String?                  @map("os_type")
+  targetArch              String?                  @map("target_arch")
+  targetPlatform          String?                  @map("target_platform")
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  updatedAt               DateTime                 @updatedAt @map("updated_at")
+  user                    User                     @relation(fields: [userId], references: [id])
+  agentRuns               AgentRun[]
+  checkpoints             Checkpoint[]
+  buildRuns               BuildRun[]
+  qemuSmokeRuns           QemuSmokeRun[]
+  courseTaskSessions      CourseTaskSession[]
+  evaluationCourseContext EvaluationCourseContext?
+  workspaceActivityEvents WorkspaceActivityEvent[]
+
+  @@map("workspaces")
+}
+
+model AiProviderSetting {
+  id                  String   @id @default(cuid())
+  userId              String   @unique @map("user_id")
+  baseUrl             String   @map("base_url")
+  apiKey              String   @map("api_key") @db.Text
+  model               String
+  temperature         Float?
+  maxTokens           Int?     @map("max_tokens")
+  contextWindowTokens Int?     @map("context_window_tokens")
+  reasoningEffort     String   @default("default") @map("reasoning_effort") @db.VarChar(16)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  user                User     @relation(fields: [userId], references: [id])
+
+  @@map("ai_provider_settings")
+}
+
+model AiProviderProfile {
+  id                  String                      @id @default(cuid())
+  ownerEmail          String                      @map("owner_email") @db.VarChar(191)
+  name                String                      @db.VarChar(128)
+  baseUrl             String                      @map("base_url")
+  apiKey              String                      @map("api_key") @db.Text
+  model               String
+  level               AiProviderLevel             @default(medium)
+  temperature         Float?
+  contextWindowTokens Int?                        @map("context_window_tokens")
+  createdAt           DateTime                    @default(now()) @map("created_at")
+  updatedAt           DateTime                    @updatedAt @map("updated_at")
+  selection           AiProviderSelection?
+  classAssignments    ClassAiProviderAssignment[]
+
+  @@unique([ownerEmail, name])
+  @@index([ownerEmail])
+  @@map("ai_provider_profiles")
+}
+
+model ClassAiProviderAssignment {
+  id              String              @id @default(cuid())
+  classInviteId   String              @unique @map("class_invite_id")
+  profileId       String              @map("profile_id")
+  teacherUserId   String              @map("teacher_user_id")
+  enforced        Boolean             @default(false)
+  dailyTokenLimit Int?                @map("daily_token_limit")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  classInvite     InviteCode          @relation(fields: [classInviteId], references: [id], onDelete: Cascade)
+  profile         AiProviderProfile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  teacher         User                @relation("ClassAiProviderTeacher", fields: [teacherUserId], references: [id], onDelete: Cascade)
+  tokenUsages     ClassAiTokenUsage[]
+
+  @@index([profileId])
+  @@index([teacherUserId])
+  @@map("class_ai_provider_assignments")
+}
+
+model ClassAiTokenUsage {
+  id             String                    @id @default(cuid())
+  assignmentId   String                    @map("assignment_id")
+  userId         String                    @map("user_id")
+  usageDate      String                    @map("usage_date") @db.Char(10)
+  usedTokens     Int                       @default(0) @map("used_tokens")
+  reservedTokens Int                       @default(0) @map("reserved_tokens")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+  assignment     ClassAiProviderAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user           User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, userId, usageDate])
+  @@index([userId, usageDate])
+  @@map("class_ai_token_usages")
+}
+
+model AiProviderSelection {
+  ownerEmail String            @id @map("owner_email") @db.VarChar(191)
+  profileId  String            @unique @map("profile_id")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+  profile    AiProviderProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("ai_provider_selections")
+}
+
+model AiModelProfile {
+  id                   String   @id @default(cuid())
+  providerName         String?  @map("provider_name") @db.VarChar(128)
+  modelName            String   @unique @map("model_name") @db.VarChar(191)
+  aliases              Json?
+  contextWindowTokens  Int      @map("context_window_tokens")
+  effectiveInputTokens Int?     @map("effective_input_tokens")
+  sourceUrl            String?  @map("source_url") @db.VarChar(512)
+  sourceNote           String?  @map("source_note") @db.Text
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@index([providerName])
+  @@index([isActive])
+  @@map("ai_model_profiles")
+}
+
+model AgentRun {
+  id                      String                   @id @default(cuid())
+  userId                  String                   @map("user_id")
+  workspaceId             String                   @map("workspace_id")
+  sessionId               String?                  @map("session_id")
+  runSequence             Int?                     @map("run_sequence")
+  modelName               String?                  @map("model_name") @db.VarChar(191)
+  courseTaskSessionId     String?                  @map("course_task_session_id")
+  courseSubtaskId         String?                  @map("course_subtask_id")
+  runMode                 AgentRunMode?            @map("run_mode")
+  prompt                  String                   @db.Text
+  status                  AgentRunStatus           @default(created)
+  currentStep             String?                  @map("current_step")
+  taskSummary             String?                  @map("task_summary") @db.Text
+  intent                  String?                  @db.VarChar(64)
+  responseMarkdown        String?                  @map("response_markdown") @db.Text
+  finalAnswerMarkdown     String?                  @map("final_answer_markdown") @db.Text
+  activityLogMarkdown     String?                  @map("activity_log_markdown") @db.LongText
+  errorMessage            String?                  @map("error_message") @db.Text
+  startedAt               DateTime                 @default(now()) @map("started_at")
+  finishedAt              DateTime?                @map("finished_at")
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  updatedAt               DateTime                 @updatedAt @map("updated_at")
+  user                    User                     @relation(fields: [userId], references: [id])
+  workspace               Workspace                @relation(fields: [workspaceId], references: [id])
+  courseTaskSession       CourseTaskSession?       @relation(fields: [courseTaskSessionId], references: [id])
+  courseSubtask           CourseSubtask?           @relation(fields: [courseSubtaskId], references: [id])
+  traceEvents             AgentTraceEvent[]
+  patchPlans              AgentPatchPlan[]
+  checkpoints             Checkpoint[]
+  buildRuns               BuildRun[]
+  qemuSmokeRuns           QemuSmokeRun[]
+  workspaceActivityEvents WorkspaceActivityEvent[]
+
+  @@unique([sessionId, runSequence])
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([status])
+  @@index([courseTaskSessionId])
+  @@index([courseSubtaskId])
+  @@index([sessionId])
+  @@map("agent_runs")
+}
+
+model EvaluationCourseContext {
+  id                  String    @id @default(cuid())
+  workspaceId         String    @unique @map("workspace_id")
+  courseId            String    @map("course_id") @db.VarChar(191)
+  courseTitle         String    @map("course_title") @db.VarChar(255)
+  courseworkTitle     String    @map("coursework_title") @db.VarChar(255)
+  courseworkVersion   String?   @map("coursework_version") @db.VarChar(128)
+  semester            String?   @db.VarChar(64)
+  className           String?   @map("class_name") @db.VarChar(255)
+  specificationSha256 String?   @map("specification_sha256") @db.VarChar(64)
+  initializedAt       DateTime  @default(now()) @map("initialized_at")
+  workspace           Workspace @relation(fields: [workspaceId], references: [id])
+
+  @@map("evaluation_course_contexts")
+}
+
+model WorkspaceActivityEvent {
+  id           String    @id @default(cuid())
+  workspaceId  String    @map("workspace_id")
+  actorUserId  String?   @map("actor_user_id")
+  sessionId    String?   @map("session_id")
+  source       String    @db.VarChar(64)
+  eventType    String    @map("event_type") @db.VarChar(64)
+  path         String?   @db.VarChar(1024)
+  beforeSha256 String?   @map("before_sha256") @db.VarChar(64)
+  afterSha256  String?   @map("after_sha256") @db.VarChar(64)
+  agentRunId   String?   @map("agent_run_id")
+  metadataJson Json?     @map("metadata_json")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
+  actorUser    User?     @relation("WorkspaceActivityActor", fields: [actorUserId], references: [id])
+  agentRun     AgentRun? @relation(fields: [agentRunId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([agentRunId])
+  @@index([actorUserId])
+  @@map("workspace_activity_events")
+}
+
+model CourseTaskSession {
+  id               String                  @id @default(cuid())
+  userId           String                  @map("user_id")
+  workspaceId      String                  @map("workspace_id")
+  title            String                  @db.VarChar(255)
+  status           CourseTaskSessionStatus @default(active)
+  summaryMarkdown  String?                 @map("summary_markdown") @db.Text
+  currentSubtaskId String?                 @map("current_subtask_id")
+  lastRunId        String?                 @map("last_run_id")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+  user             User                    @relation(fields: [userId], references: [id])
+  workspace        Workspace               @relation(fields: [workspaceId], references: [id])
+  subtasks         CourseSubtask[]
+  agentRuns        AgentRun[]
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("course_task_sessions")
+}
+
+model CourseSubtask {
+  id                    String              @id @default(cuid())
+  courseTaskSessionId   String              @map("course_task_session_id")
+  title                 String              @db.VarChar(255)
+  goalMarkdown          String?             @map("goal_markdown") @db.Text
+  status                CourseSubtaskStatus @default(active)
+  latestUserIntent      String?             @map("latest_user_intent") @db.Text
+  lastValidationSummary String?             @map("last_validation_summary") @db.Text
+  lastBuildStatus       ExecutionStatus?    @map("last_build_status")
+  lastQemuStatus        ExecutionStatus?    @map("last_qemu_status")
+  lastRunId             String?             @map("last_run_id")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  courseTaskSession     CourseTaskSession   @relation(fields: [courseTaskSessionId], references: [id])
+  files                 CourseSubtaskFile[]
+  agentRuns             AgentRun[]
+
+  @@index([courseTaskSessionId])
+  @@map("course_subtasks")
+}
+
+model CourseSubtaskFile {
+  id              String        @id @default(cuid())
+  courseSubtaskId String        @map("course_subtask_id")
+  path            String
+  kind            String        @db.VarChar(32)
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  courseSubtask   CourseSubtask @relation(fields: [courseSubtaskId], references: [id])
+
+  @@index([courseSubtaskId])
+  @@map("course_subtask_files")
+}
+
+model AgentTraceEvent {
+  id                    String          @id @default(cuid())
+  agentRunId            String          @map("agent_run_id")
+  stepName              String          @map("step_name")
+  stepStatus            AgentStepStatus @map("step_status")
+  inputSummaryMarkdown  String?         @map("input_summary_markdown") @db.Text
+  outputSummaryMarkdown String?         @map("output_summary_markdown") @db.Text
+  errorMarkdown         String?         @map("error_markdown") @db.Text
+  debugMarkdown         String?         @map("debug_markdown") @db.Text
+  createdAt             DateTime        @default(now()) @map("created_at")
+  agentRun              AgentRun        @relation(fields: [agentRunId], references: [id])
+
+  @@index([agentRunId])
+  @@map("agent_trace_events")
+}
+
+model AgentPatchPlan {
+  id                         String          @id @default(cuid())
+  agentRunId                 String          @map("agent_run_id")
+  status                     PatchPlanStatus @default(generated)
+  taskSummary                String          @map("task_summary") @db.Text
+  designMarkdown             String          @map("design_markdown") @db.Text
+  modifiedFilesJson          Json            @map("modified_files_json")
+  patch                      String          @db.LongText
+  studentExplanationMarkdown String          @map("student_explanation_markdown") @db.Text
+  validationMarkdown         String          @map("validation_markdown") @db.Text
+  knownLimitationsJson       Json?           @map("known_limitations_json")
+  debugMarkdown              String?         @map("debug_markdown") @db.Text
+  appliedAt                  DateTime?       @map("applied_at")
+  createdAt                  DateTime        @default(now()) @map("created_at")
+  updatedAt                  DateTime        @updatedAt @map("updated_at")
+  agentRun                   AgentRun        @relation(fields: [agentRunId], references: [id])
+
+  @@index([agentRunId])
+  @@map("agent_patch_plans")
+}
+
+model Checkpoint {
+  id             String           @id @default(cuid())
+  agentRunId     String?          @map("agent_run_id")
+  workspaceId    String           @map("workspace_id")
+  label          String
+  path           String
+  status         CheckpointStatus @default(created)
+  resultMarkdown String?          @map("result_markdown") @db.Text
+  createdAt      DateTime         @default(now()) @map("created_at")
+  restoredAt     DateTime?        @map("restored_at")
+  agentRun       AgentRun?        @relation(fields: [agentRunId], references: [id])
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id])
+
+  @@index([agentRunId])
+  @@index([workspaceId])
+  @@map("checkpoints")
+}
+
+model BuildRun {
+  id                 String          @id @default(cuid())
+  agentRunId         String          @map("agent_run_id")
+  workspaceId        String          @map("workspace_id")
+  command            String          @default("make")
+  status             ExecutionStatus @default(running)
+  exitCode           Int?            @map("exit_code")
+  log                String          @db.LongText
+  logSummaryMarkdown String?         @map("log_summary_markdown") @db.Text
+  analysisMarkdown   String?         @map("analysis_markdown") @db.Text
+  startedAt          DateTime        @default(now()) @map("started_at")
+  finishedAt         DateTime?       @map("finished_at")
+  createdAt          DateTime        @default(now()) @map("created_at")
+  agentRun           AgentRun        @relation(fields: [agentRunId], references: [id])
+  workspace          Workspace       @relation(fields: [workspaceId], references: [id])
+
+  @@index([agentRunId])
+  @@index([workspaceId])
+  @@map("build_runs")
+}
+
+model QemuSmokeRun {
+  id                    String          @id @default(cuid())
+  agentRunId            String          @map("agent_run_id")
+  workspaceId           String          @map("workspace_id")
+  command               String          @default("make qemu-smoke")
+  status                ExecutionStatus @default(running)
+  exitCode              Int?            @map("exit_code")
+  output                String          @db.LongText
+  outputSummaryMarkdown String?         @map("output_summary_markdown") @db.Text
+  analysisMarkdown      String?         @map("analysis_markdown") @db.Text
+  startedAt             DateTime        @default(now()) @map("started_at")
+  finishedAt            DateTime?       @map("finished_at")
+  createdAt             DateTime        @default(now()) @map("created_at")
+  agentRun              AgentRun        @relation(fields: [agentRunId], references: [id])
+  workspace             Workspace       @relation(fields: [workspaceId], references: [id])
+
+  @@index([agentRunId])
+  @@index([workspaceId])
+  @@map("qemu_smoke_runs")
+}

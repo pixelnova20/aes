@@ -1,0 +1,41 @@
+{
+  "name": "courseworks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/server",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run dev:server",
+    "dev:server": "npm run dev --workspace @courseworks/server",
+    "dev:web": "npm run dev --workspace @courseworks/web",
+    "build:management": "npm --prefix ../management run build",
+    "build": "npm run build:management && npm run build --workspaces --if-present",
+    "check": "npm run deps:check && npm --prefix ../management run check && npm run check --workspaces --if-present",
+    "start": "npm run start --workspace @courseworks/server",
+    "test": "node scripts/run-tests.mjs",
+    "prisma:generate": "npm run prisma:generate --workspace @courseworks/server",
+    "prisma:bootstrap": "npm run prisma:bootstrap --workspace @courseworks/server",
+    "prisma:migrate": "npm run prisma:migrate --workspace @courseworks/server",
+    "prisma:deploy": "npm run prisma:deploy --workspace @courseworks/server",
+    "seed": "npm run seed --workspace @courseworks/server",
+    "model:add": "npm run model:add --workspace @courseworks/server --",
+    "model:list": "npm run model:list --workspace @courseworks/server",
+    "model:remove": "npm run model:remove --workspace @courseworks/server --",
+    "deps:check": "node scripts/check-dependencies.mjs",
+    "image:build": "bash scripts/build-images.sh",
+    "image:verify": "bash scripts/verify-images.sh",
+    "setup": "bash scripts/install.sh",
+    "install:verify": "bash scripts/verify-install.sh"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9",
+    "dompurify": "3.4.12",
+    "react-router": "6.30.4"
+  }
+}

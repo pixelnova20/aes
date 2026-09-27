@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}我的成绩{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>我的成绩</h2>
+  <a href="{{ url_for('student.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+<div class="card">
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>作业</th><th>课程</th><th>分数</th><th>评价</th><th>批改时间</th></tr></thead>
+    <tbody>
+      {% for assignment, grade in rows %}
+      <tr>
+        <td><a href="{{ url_for('student.answer_page', assignment_id=assignment.id) }}">{{ assignment.title }}</a></td>
+        <td>{{ assignment.course.name }}</td>
+        <td><strong>{{ grade.score }}</strong></td>
+        <td>{{ grade.comment or '—' }}</td>
+        <td>{{ grade.graded_at|dt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">暂无已批改的成绩</p>
+  {% endif %}
+</div>
+{% endblock %}
