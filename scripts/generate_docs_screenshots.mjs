@@ -216,10 +216,31 @@ function chatSnapshot(reviewMode = false) {
   if (reviewMode) {
     return {
       currentSessionId: "review-session",
-      session: { sessionId: "review-session", title: "班级实验审阅", updatedAt: "2026-09-26T09:30:00.000Z" },
+      session: { sessionId: "review-session", title: "总结学生实验进度", updatedAt: "2026-09-26T09:30:00.000Z" },
       sessions: [],
-      history: [],
-      contextUsage: { tokens: 0, contextWindow: 128000, percent: 0 },
+      history: [
+        {
+          id: "review-user-1",
+          role: "user",
+          content: "请总结 S20260001 的实验完成情况，评价当前实现，并给出下一步建议。",
+          createdAt: "2026-09-26T09:28:00.000Z",
+        },
+        {
+          id: "review-assistant-1",
+          role: "assistant",
+          content: [
+            "## 审阅结论",
+            "",
+            "该生已经完成教学内核入口和基本构建配置，并开始实现调度器。",
+            "",
+            "- **完成情况**：工程结构清晰，当前版本可以完成内核构建。",
+            "- **实现评价**：进程状态切换思路正确，但时间片耗尽后的重新入队逻辑仍需补全。",
+            "- **下一步建议**：完善时钟中断中的时间片递减，补充多进程轮转测试，并记录 QEMU 运行结果。",
+          ].join("\n"),
+          createdAt: "2026-09-26T09:30:00.000Z",
+        },
+      ],
+      contextUsage: { tokens: 4_820, contextWindow: 128_000, percent: 3.8 },
     };
   }
   return {
@@ -398,6 +419,7 @@ async function generate(browser) {
 
   page = await newCourseworksPage(browser, "teacher", "/review");
   await page.getByText("Courseworks 审阅", { exact: true }).waitFor();
+  await page.getByText("审阅结论", { exact: true }).waitFor();
   await screenshot(page, "courseworks-audit.png");
   await page.close();
 
@@ -418,8 +440,58 @@ async function generate(browser) {
   await page.close();
 
   page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
+  await page.route("**/api/presentations/*/chat/stream", async (route) => {
+    const answer = [
+      "这一页介绍了进程与线程这一章的学习范围：",
+      "",
+      "- 进程的基本状态及状态转换",
+      "- 处理器调度的目标与常用算法",
+      "- 线程模型以及线程与进程的关系",
+      "",
+      "学习时可以先画出进程状态转换图，再比较不同调度算法的适用场景。",
+    ].join("\n");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson; charset=utf-8",
+      body: `${JSON.stringify({ delta: answer })}\n`,
+    });
+  });
+  await page.goto(`${SLIDESHOW_URL}/__docs/login/student-ai`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "问 AI" }).click();
+  await page.locator("#chat-input").fill("请总结这一页的重点，并告诉我应该怎样学习。");
+  await page.getByRole("button", { name: "发送" }).click();
+  await page.getByText("进程的基本状态及状态转换", { exact: true }).waitFor();
+  await screenshot(page, "slideshow-ai-tutor.png");
+  await page.close();
+
+  page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
   await page.goto(`${HOMEWORKS_URL}/__docs/login/student`, { waitUntil: "networkidle" });
   await screenshot(page, "homeworks-student.png", { fullPage: true });
+  await page.close();
+
+  page = await browser.newPage({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 });
+  await page.route("**/student/assignments/*/questions/*/ai-chat/stream", async (route) => {
+    const answer = [
+      "可以先回忆信号量的两个核心操作：等待和唤醒。",
+      "",
+      "判断时重点看两点：",
+      "1. 多个执行流是否会同时修改共享状态；",
+      "2. 修改过程是否必须作为不可分割的整体完成。",
+      "",
+      "再逐项比较四个选项，找出专门用于同步与互斥的机制。",
+    ].join("\n");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson; charset=utf-8",
+      body: `${JSON.stringify({ delta: answer })}\n`,
+    });
+  });
+  await page.goto(`${HOMEWORKS_URL}/__docs/login/student-ai`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "问 AI" }).first().click();
+  await page.locator("#ai-user-prompt").fill("我不理解这里为什么强调原子性，可以给我一些思路吗？");
+  await page.locator("#ai-send-button").click();
+  await page.getByText("可以先回忆信号量的两个核心操作：等待和唤醒。", { exact: true }).waitFor();
+  await screenshot(page, "homeworks-ai-tutor.png");
   await page.close();
 
   page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });

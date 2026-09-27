@@ -14,12 +14,14 @@ Courseworks 的课程工作区、教师审阅模式和 OS Lab 截图统一使用
 | `portal-student.png` | 学生服务门户 |
 | `portal-teacher.png` | 教师服务门户 |
 | `provider-profiles.png` | AI Provider 管理 |
-| `slideshow.png` | 课件浏览与问答 |
+| `slideshow.png` | 教师课件列表 |
+| `slideshow-ai-tutor.png` | 学生在课件中使用 AI 问答 |
 | `homeworks-student.png` | 学生作业页面 |
+| `homeworks-ai-tutor.png` | 学生使用逐题 AI 作业辅导 |
 | `homeworks-grading.png` | 教师批改页面 |
 | `courseworks.png` | Courseworks 编辑器和 AI 助手 |
 | `os-lab.png` | Bash + QEMU + noVNC 操作系统实验环境 |
-| `courseworks-audit.png` | 教师审阅模式 |
+| `courseworks-audit.png` | 教师通过自然语言对话总结和评价学生工作 |
 | `admin-console.png` | 超级管理员控制台 |
 | `teacher-class-provider-quota-dialog.png` | 教师为班级指定 AI Provider 与每日配额的对话框 |
 

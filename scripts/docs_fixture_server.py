@@ -183,7 +183,7 @@ def run_homeworks(data_root: Path, port: int) -> None:
             published_at=datetime.now() - timedelta(days=7),
         )
         todo_assignment = Assignment(
-            title="存储管理预习",
+            title="同步与互斥预习",
             course_id=course.id,
             chapter_id=chapter.id,
             class_id=klass.id,
@@ -243,6 +243,7 @@ def run_homeworks(data_root: Path, port: int) -> None:
         teacher_id = teacher.id
         student_id = student.id
         grading_assignment_id = grading_assignment.id
+        todo_assignment_id = todo_assignment.id
 
     @app.get("/__docs/login/<role>")
     def docs_login(role):
@@ -251,6 +252,8 @@ def run_homeworks(data_root: Path, port: int) -> None:
         session["user_id"] = teacher_id if role == "teacher" else student_id
         if role == "teacher":
             return redirect(f"/teacher/assignments/{grading_assignment_id}/grade/{student_id}")
+        if role == "student-ai":
+            return redirect(f"/student/assignments/{todo_assignment_id}")
         return redirect("/student/")
 
     app.run(host="127.0.0.1", port=port, use_reloader=False)
@@ -277,6 +280,7 @@ def run_slideshow(data_root: Path, port: int) -> None:
                 class_id INTEGER, enabled INTEGER
             );
             INSERT INTO users VALUES (1, 'docs-teacher', 'teacher@example.edu', 10, 1);
+            INSERT INTO users VALUES (2, 'docs-student', 'student@example.edu', 10, 1);
         """)
     with sqlite3.connect(courses_db) as database:
         database.executescript("""
@@ -367,6 +371,21 @@ def run_slideshow(data_root: Path, port: int) -> None:
             "course_name": "操作系统原理",
         }
         return redirect("/")
+
+    @app.get("/__docs/login/student-ai")
+    def docs_student_ai_login():
+        session.clear()
+        session["_csrf_token"] = "docs-only-csrf"
+        session["slideshow_user"] = {
+            "external_id": "docs-student",
+            "email": "student@example.edu",
+            "name": "林同学",
+            "role": "student",
+            "class_id": 10,
+            "class_name": "操作系统实验班",
+            "course_name": "操作系统原理",
+        }
+        return redirect("/presentations/processes")
 
     app.run(host="127.0.0.1", port=port, use_reloader=False)
 
