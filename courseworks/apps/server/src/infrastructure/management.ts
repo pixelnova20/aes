@@ -8,7 +8,7 @@ import {
   syncHomeworksInviteCodeStatus,
   syncHomeworksInviteCodeUsage,
   syncHomeworksUser,
-} from "@all-together/management";
+} from "@aes/management";
 
 import { config } from "../config/index.js";
 import { resetWorkspaceLabSessions } from "../modules/execution/index.js";

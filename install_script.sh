@@ -8,6 +8,7 @@ SERVICE_USER="${SUDO_USER:-}"
 SERVICE_GROUP=""
 SERVICE_HOME="/var/lib/aes/home"
 WEB_ROOT="/var/lib/aes/www"
+TOOLBOX_IMAGE="${DOCKER_TOOLBOX_IMAGE:-}"
 HTTP_PORT="${AES_HTTP_PORT:-}"
 ENV_FILE="$ROOT/courseworks/.env"
 VENV="$ROOT/.venv"
@@ -16,12 +17,14 @@ usage() {
   cat <<'EOF'
 Usage: sudo ./install_script.sh [--port PORT]
 
-Clone AES as your normal user under your home directory, then run this script
-through sudo. The repository remains owned by that normal user. Before running
-it, install the Ubuntu packages listed in INSTALL.md and Node.js 22 or newer.
+Place the AES source tree under your normal user home directory, either with
+git clone or by extracting a source archive, then run this script through sudo.
+The source tree remains owned by that normal user. Before running it, prepare
+the packages, Node.js, and toolbox image described in INSTALL.md.
 
 Environment override:
   AES_HTTP_PORT      public HTTP port (default: existing port or 10001)
+  DOCKER_TOOLBOX_IMAGE prebuilt toolbox image (default: courseworks-toolbox:latest)
 EOF
 }
 
@@ -32,6 +35,39 @@ log() {
 die() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+wait_for_http_endpoint() {
+  local label="$1"
+  local service="$2"
+  local url="$3"
+  local attempt
+
+  for (( attempt = 1; attempt <= 60; attempt++ )); do
+    if curl --fail --silent --output /dev/null --head --max-time 3 "$url"; then
+      if (( attempt > 1 )); then
+        printf '%s endpoint became ready after %s seconds.\n' "$label" "$((attempt - 1))"
+      fi
+      return 0
+    fi
+    sleep 1
+  done
+
+  printf '\n%s endpoint did not become ready: %s\n' "$label" "$url" >&2
+  systemctl status --no-pager -l "$service" >&2 || true
+  journalctl --no-pager -u "$service" -n 50 >&2 || true
+  die "$label HTTP endpoint failed its readiness check."
+}
+
+read_optional_env_value() {
+  local key="$1"
+  local value=""
+  if [[ -f "$ENV_FILE" ]]; then
+    value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1)"
+    value="${value#\"}"
+    value="${value%\"}"
+  fi
+  printf '%s' "$value"
 }
 
 on_error() {
@@ -71,9 +107,9 @@ SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 [[ "$HTTP_PORT" =~ ^[0-9]+$ ]] || die "HTTP port must be numeric."
 (( HTTP_PORT >= 1 && HTTP_PORT <= 65535 )) || die "HTTP port is out of range."
 [[ "$ROOT" =~ ^[A-Za-z0-9_./-]+$ ]] || die "The installation path may only contain letters, numbers, _, -, . and /."
-[[ -f "$ROOT/courseworks/package.json" ]] || die "Run the script from a complete AES repository clone."
+[[ -f "$ROOT/courseworks/package.json" ]] || die "Run the script from a complete AES source tree."
 [[ "$(stat -c %u "$ROOT")" == "$(id -u "$SERVICE_USER")" ]] \
-  || die "The AES repository must be owned by $SERVICE_USER. Clone it without sudo under that user's home directory."
+  || die "The AES source tree must be owned by $SERVICE_USER. Create it without sudo under the installing user home directory."
 
 required_commands=(
   awk cp curl docker find getent git grep head hostname install ip iptables libreoffice mysql
@@ -82,9 +118,11 @@ required_commands=(
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null 2>&1 || die "Missing command: $command_name. Complete section 2 of INSTALL.md first."
 done
-for writable_path in "$ROOT" "$ROOT/.git" "$ROOT/courseworks" "$ROOT/management"; do
+writable_paths=("$ROOT" "$ROOT/courseworks" "$ROOT/management")
+[[ ! -e "$ROOT/.git" ]] || writable_paths+=("$ROOT/.git")
+for writable_path in "${writable_paths[@]}"; do
   runuser -u "$SERVICE_USER" -- test -w "$writable_path" \
-    || die "$writable_path is not writable by $SERVICE_USER. Clone the repository without sudo."
+    || die "$writable_path is not writable by $SERVICE_USER. The source tree must belong to the installing user."
 done
 
 node_major="$(node --version | sed -E 's/^v([0-9]+).*/\1/')"
@@ -97,9 +135,20 @@ if [[ -r /etc/os-release ]]; then
   [[ "${ID:-}" == "ubuntu" ]] || printf 'WARNING: this installer is tested on Ubuntu; detected %s.\n' "${PRETTY_NAME:-unknown OS}" >&2
 fi
 
-log "Starting MySQL, Docker and Nginx"
-systemctl enable --now mysql docker nginx
-docker info >/dev/null
+log "Starting MySQL and Nginx; verifying Docker"
+systemctl enable --now mysql nginx
+systemctl is-active --quiet docker \
+  || die "Docker is not running. Install and start Docker as described in section 2 of INSTALL.md."
+docker info >/dev/null \
+  || die "Cannot communicate with Docker. Verify the daemon before installing AES."
+
+TOOLBOX_IMAGE="${TOOLBOX_IMAGE:-$(read_optional_env_value DOCKER_TOOLBOX_IMAGE)}"
+TOOLBOX_IMAGE="${TOOLBOX_IMAGE:-courseworks-toolbox:latest}"
+log "Verifying the prebuilt Courseworks toolbox image"
+if ! docker image inspect "$TOOLBOX_IMAGE" >/dev/null 2>&1; then
+  die "Missing Docker image $TOOLBOX_IMAGE. Build and verify it as described in section 3 of INSTALL.md."
+fi
+DOCKER_TOOLBOX_IMAGE="$TOOLBOX_IMAGE" bash "$ROOT/courseworks/scripts/verify-images.sh"
 
 log "Preparing the application runtime for $SERVICE_USER"
 usermod -aG docker "$SERVICE_USER"
@@ -244,6 +293,10 @@ else
   chmod 0600 "$ENV_FILE"
 fi
 
+set_env_value "$ENV_FILE" DOCKER_TOOLBOX_IMAGE "$TOOLBOX_IMAGE"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$ENV_FILE"
+chmod 0600 "$ENV_FILE"
+
 DATABASE_URL="$(env_value DATABASE_URL)"
 if [[ "$DATABASE_URL" =~ ^mysql://vibeos_user:([0-9a-fA-F]+)@localhost:3306/vibeos_agent$ ]]; then
   DB_PASSWORD="${BASH_REMATCH[1]}"
@@ -282,6 +335,16 @@ as_app() {
     PATH="$VENV/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     "$@"
 }
+
+log "Testing Homeworks and Slideshow"
+(
+  cd "$ROOT/homeworks"
+  as_app "$VENV/bin/python" -m unittest discover -s tests -p "test_*.py"
+)
+(
+  cd "$ROOT/slideshow"
+  as_app "$VENV/bin/python" -m unittest discover -s tests -p "test_*.py"
+)
 
 log "Installing, testing and building Courseworks"
 cd "$ROOT/courseworks"
@@ -424,9 +487,9 @@ for service in courseworks-network courseworks-backend homework slideshow; do
     die "$service did not start successfully."
   }
 done
-curl --fail --silent --show-error --head "http://127.0.0.1:${HTTP_PORT}/" >/dev/null
-curl --fail --silent --show-error --head "http://127.0.0.1:${HTTP_PORT}/homeworks/" >/dev/null
-curl --fail --silent --show-error --head "http://127.0.0.1:${HTTP_PORT}/slideshow/" >/dev/null
+wait_for_http_endpoint "Courseworks" nginx "http://127.0.0.1:${HTTP_PORT}/"
+wait_for_http_endpoint "Homeworks" homework "http://127.0.0.1:${HTTP_PORT}/homeworks/"
+wait_for_http_endpoint "Slideshow" slideshow "http://127.0.0.1:${HTTP_PORT}/slideshow/"
 
 SERVER_IP="$(hostname -I 2>/dev/null | awk '{ print $1 }')"
 printf '\nAES installation completed.\n'

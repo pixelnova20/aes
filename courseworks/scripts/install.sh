@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# 文件作用：在新 Ubuntu 环境中安装依赖、生成 Prisma Client、迁移数据库、构建应用和 toolbox 镜像。
+# 文件作用：在新 Ubuntu 环境中安装依赖、生成 Prisma Client、迁移数据库、构建应用。
 # 模块位置：scripts，属于 Courseworks 自动化安装入口。
-# 重要函数：run() 统一展示并执行安装命令，同时支持 --dry-run；主流程处理跳过镜像或迁移的命令行选项。
+# 重要函数：run() 统一展示并执行安装命令，同时支持 --dry-run；主流程处理 dry-run 和跳过迁移的命令行选项。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
-SKIP_IMAGE=0
 SKIP_MIGRATE=0
 
 for argument in "$@"; do
   case "$argument" in
     --dry-run) DRY_RUN=1 ;;
-    --skip-image) SKIP_IMAGE=1 ;;
     --skip-migrate) SKIP_MIGRATE=1 ;;
     *)
       printf 'Unknown option: %s\n' "$argument" >&2
@@ -59,14 +57,6 @@ run mkdir -p student-workspace
 if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
   run npm run prisma:bootstrap
   run npm run prisma:deploy
-fi
-if [[ "$SKIP_IMAGE" -eq 0 ]]; then
-  command -v docker >/dev/null || {
-    printf 'Missing required command: docker\n' >&2
-    exit 1
-  }
-  run npm run image:build
-  run npm run image:verify
 fi
 
 run npm run install:verify

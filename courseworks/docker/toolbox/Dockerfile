@@ -1,15 +1,48 @@
 # 文件作用：定义 Courseworks 编译、测试、QEMU、ctags 和 noVNC 所需的受限 toolbox 镜像。
 # 模块位置：docker/toolbox，属于执行基础设施镜像定义。
 # 重要阶段：安装交叉编译工具链，创建 runner 用户，安装入口与 QEMU wrapper，并设置非 root 运行环境。
-FROM node:22-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
+FROM ${NODE_IMAGE}
 
+ARG DEBIAN_MIRROR=http://deb.debian.org/debian
+ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
 ARG LVGL_VERSION=9.5.0
 ARG LVGL_SHA256=34a955cdf3a2d005507b704e87357af669a114523b6d3f77b5344fdc68717bc6
+ARG LVGL_SOURCE_URL
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-RUN apt-get update \
+RUN set -eu; \
+  case "$DEBIAN_MIRROR" in http://*|https://*) ;; *) echo "Invalid DEBIAN_MIRROR" >&2; exit 1 ;; esac; \
+  case "$DEBIAN_SECURITY_MIRROR" in http://*|https://*) ;; *) echo "Invalid DEBIAN_SECURITY_MIRROR" >&2; exit 1 ;; esac; \
+  write_sources() { \
+    printf "%s\n" \
+      "Types: deb" \
+      "URIs: $1" \
+      "Suites: bookworm bookworm-updates" \
+      "Components: main" \
+      "Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg" \
+      "" \
+      "Types: deb" \
+      "URIs: $2" \
+      "Suites: bookworm-security" \
+      "Components: main" \
+      "Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg" \
+      > /etc/apt/sources.list.d/debian.sources; \
+  }; \
+  if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then \
+    bootstrap_mirror="$DEBIAN_MIRROR"; \
+    bootstrap_security_mirror="$DEBIAN_SECURITY_MIRROR"; \
+    case "$bootstrap_mirror" in https://*) bootstrap_mirror="http://${bootstrap_mirror#https://}" ;; esac; \
+    case "$bootstrap_security_mirror" in https://*) bootstrap_security_mirror="http://${bootstrap_security_mirror#https://}" ;; esac; \
+    write_sources "$bootstrap_mirror" "$bootstrap_security_mirror"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates; \
+    rm -rf /var/lib/apt/lists/*; \
+  fi; \
+  write_sources "$DEBIAN_MIRROR" "$DEBIAN_SECURITY_MIRROR"; \
+  apt-get update \
   && apt-get install -y --no-install-recommends \
     bash \
     binutils-riscv64-unknown-elf \
@@ -67,7 +100,7 @@ RUN apt-get update \
     bsdextrautils \
     websockify \
   && curl -fsSL --retry 3 \
-    "https://codeload.github.com/lvgl/lvgl/tar.gz/refs/tags/v${LVGL_VERSION}" \
+    "${LVGL_SOURCE_URL:-https://codeload.github.com/lvgl/lvgl/tar.gz/refs/tags/v${LVGL_VERSION}}" \
     -o /tmp/lvgl.tar.gz \
   && echo "${LVGL_SHA256}  /tmp/lvgl.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/lvgl.tar.gz -C /opt \

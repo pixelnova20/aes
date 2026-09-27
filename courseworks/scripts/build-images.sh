@@ -7,5 +7,24 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${DOCKER_TOOLBOX_IMAGE:-courseworks-toolbox:latest}"
 
-docker build --tag "$IMAGE" "$ROOT/docker/toolbox"
+BUILD_ARGS=()
+
+add_build_arg() {
+  local variable="$1"
+  local value="${!variable:-}"
+  if [[ -n "$value" ]]; then
+    BUILD_ARGS+=(--build-arg "$variable=$value")
+  fi
+}
+
+add_build_arg NODE_IMAGE
+add_build_arg DEBIAN_MIRROR
+add_build_arg DEBIAN_SECURITY_MIRROR
+add_build_arg LVGL_SOURCE_URL
+
+if [[ -n "${DOCKER_BUILD_NETWORK:-}" ]]; then
+  BUILD_ARGS+=(--network "$DOCKER_BUILD_NETWORK")
+fi
+
+docker build "${BUILD_ARGS[@]}" --tag "$IMAGE" "$ROOT/docker/toolbox"
 printf 'Built %s\n' "$IMAGE"

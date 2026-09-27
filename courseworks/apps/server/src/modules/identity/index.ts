@@ -11,4 +11,4 @@ export {
   verifyToken,
 } from "./jwt.js";
 export { comparePassword, hashPassword } from "./password.js";
-export { USER_ROLES, isUserRole, type UserRole } from "@all-together/management";
+export { USER_ROLES, isUserRole, type UserRole } from "@aes/management";

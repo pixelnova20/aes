@@ -6,7 +6,11 @@ set -eu
 
 NETWORK_NAME="${DOCKER_RESTRICTED_NETWORK:-courseworks-restricted}"
 SUBNET="${DOCKER_RESTRICTED_SUBNET:-172.30.0.0/24}"
-DIRECT_IFACE="${DOCKER_DIRECT_IFACE:-eno1}"
+DIRECT_IFACE="${DOCKER_DIRECT_IFACE:-}"
+if [ -z "$DIRECT_IFACE" ]; then
+  DIRECT_IFACE="$(ip route show default | awk 'NR == 1 { print $5; exit }')"
+fi
+[ -n "$DIRECT_IFACE" ] || { echo "Cannot determine the default Docker egress interface." >&2; exit 1; }
 CHAIN="COURSEWORKS_EGRESS"
 
 if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then

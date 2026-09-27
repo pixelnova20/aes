@@ -1,9 +1,10 @@
 # AES 安装与部署
 
-本文说明如何在一台空白的 Ubuntu 22.04 LTS 或 24.04 LTS 服务器上部署 AES。安装分为两部分：
+本文说明如何在一台空白的 Ubuntu 22.04 LTS 或 24.04 LTS 服务器上部署 AES。安装分为三部分：
 
-1. 用户安装 Ubuntu 软件包和 Node.js；
-2. 根目录的 `install_script.sh` 完成 AES 的数据库、密钥、构建、服务和 Nginx 配置。
+1. 用户安装 Ubuntu 软件包、Node.js 和 Docker；
+2. 用户根据所在网络自行配置 Docker，构建并验证 Courseworks toolbox 镜像；
+3. 根目录的 `install_script.sh` 完成 AES 的数据库、密钥、应用构建、服务和 Nginx 配置。
 
 默认部署参数如下：
 
@@ -16,7 +17,7 @@
 | MySQL 数据库 | `vibeos_agent` |
 | MySQL 用户 | `vibeos_user` |
 
-安装脚本需要通过 `sudo` 获得系统配置权限，但仓库、依赖、构建结果和业务数据仍归发起 `sudo` 的普通用户所有。systemd 业务服务也以该用户身份运行。脚本不会通过 `apt` 安装或升级系统软件，也不会自动配置域名、TLS 证书或外部防火墙。
+安装脚本需要通过 `sudo` 获得系统配置权限，但仓库、依赖、构建结果和业务数据仍归发起 `sudo` 的普通用户所有。systemd 业务服务也以该用户身份运行。脚本不会通过 `apt` 安装或升级系统软件，不会访问 Docker Hub 或构建 toolbox 镜像，也不会自动配置 Docker 代理、镜像加速器、域名、TLS 证书或外部防火墙。
 
 ## 1. 服务器要求
 
@@ -60,7 +61,7 @@ sudo docker version
 
 如果这些命令失败，应先解决软件源、Docker 或 MySQL 问题，再运行 AES 安装脚本。
 
-## 3. 克隆并安装 AES
+## 3. 克隆仓库并准备 Docker 镜像
 
 将仓库克隆到默认目录：
 
@@ -69,11 +70,80 @@ git clone https://github.com/pixelnova20/aes.git "$HOME/aes"
 cd "$HOME/aes"
 ```
 
-确认服务器上没有需要保留的同名目录。**不要使用 `sudo git clone`，也不要使用 `sudo git pull`**；仓库必须始终由当前普通用户拥有。首次安装只需执行：
+确认服务器上没有需要保留的同名目录。**不要使用 `sudo git clone`，也不要使用 `sudo git pull`**；仓库必须始终由当前普通用户拥有。
+
+Courseworks 使用 `courseworks-toolbox:latest` 作为学生编译、Coding Agent、QEMU 和 noVNC 的隔离执行环境。镜像构建包含三类下载：Docker 基础镜像、容器内 Debian 软件包和 LVGL 源码。AES 不修改 Docker daemon 的代理或镜像加速配置，但构建脚本允许分别覆盖这三类来源。
+
+先验证 Docker daemon，并单独拉取基础镜像：
 
 ```bash
+sudo docker version
+sudo docker pull node:22-bookworm-slim
+```
+
+如果这一步超时，需要先由安装者配置 Docker daemon 的代理或可信镜像加速器。容器内的 Debian 软件包源不会影响基础镜像拉取。
+
+基础镜像可正常拉取后，选择下面一种方式构建 toolbox。网络可直接访问 Debian 官方源时执行：
+
+```bash
+cd "$HOME/aes"
+sudo env DOCKER_TOOLBOX_IMAGE=courseworks-toolbox:latest \
+  bash courseworks/scripts/build-images.sh
+```
+
+在中国大陆网络中，可通过构建参数使用国内 Debian 镜像。例如使用[中国科学技术大学 Debian 镜像](https://mirrors.ustc.edu.cn/help/debian.html)：
+
+```bash
+cd "$HOME/aes"
+sudo env \
+  DEBIAN_MIRROR=https://mirrors.ustc.edu.cn/debian \
+  DEBIAN_SECURITY_MIRROR=https://mirrors.ustc.edu.cn/debian-security \
+  DOCKER_TOOLBOX_IMAGE=courseworks-toolbox:latest \
+  bash courseworks/scripts/build-images.sh
+```
+
+如果基础镜像尚未包含系统 CA 证书，Dockerfile 会先通过同一镜像的 HTTP 地址安装 `ca-certificates`，随后切回上述 HTTPS 地址继续安装。Debian APT 会在这个引导阶段继续校验仓库签名和软件包哈希。
+
+这两个变量只替换容器内的 Debian 软件包源。若单位提供自己的基础镜像仓库或 LVGL 归档镜像，还可分别设置 `NODE_IMAGE` 和 `LVGL_SOURCE_URL`；LVGL 下载后仍会执行仓库中固定的 SHA-256 校验。例如：
+
+```bash
+sudo env \
+  NODE_IMAGE=registry.example.edu/library/node:22-bookworm-slim \
+  LVGL_SOURCE_URL=https://mirror.example.edu/lvgl/v9.5.0.tar.gz \
+  DEBIAN_MIRROR=https://mirrors.ustc.edu.cn/debian \
+  DEBIAN_SECURITY_MIRROR=https://mirrors.ustc.edu.cn/debian-security \
+  bash courseworks/scripts/build-images.sh
+```
+
+不要使用来源不明的镜像或源码代理。也可以将上述地址替换为单位内部维护的可信镜像。
+
+执行仓库提供的完整镜像验证。该检查会启动临时容器，验证编译器、QEMU、noVNC、网络工具、OCR、PDF 工具和图形开发库：
+
+```bash
+cd "$HOME/aes"
+sudo env DOCKER_TOOLBOX_IMAGE=courseworks-toolbox:latest \
+  bash courseworks/scripts/verify-images.sh
+```
+
+最后确认镜像存在：
+
+```bash
+sudo docker image inspect courseworks-toolbox:latest \
+  --format '{{.Id}} {{.RepoTags}}'
+```
+
+只有上述构建和验证全部成功后，才继续执行主安装脚本。
+
+## 4. 安装 AES
+
+首次安装执行：
+
+```bash
+cd "$HOME/aes"
 sudo ./install_script.sh
 ```
+
+主安装脚本只验证预先构建的 toolbox 镜像，不会拉取基础镜像或重新构建它。
 
 仓库中的 `superuser.toml` 包含示例凭据。首次运行时，脚本检测到示例值后会询问：
 
@@ -84,18 +154,21 @@ sudo ./install_script.sh
 密码输入不会显示在终端中。脚本随后会自动完成：
 
 1. 将执行安装的普通用户加入 Docker 组，并保持仓库归该用户所有；
-2. 限制 `superuser.toml` 和 `courseworks/.env` 的文件权限；
-3. 自动生成 MySQL 密码、JWT 密钥和两个 Flask 会话密钥；
-4. 创建 `vibeos_agent` 数据库及 `vibeos_user`；
-5. 创建持久化数据目录和 Python 虚拟环境；
-6. 安装 Python、Node.js 依赖并运行代码检查和测试；
-7. 执行 Prisma migration，构建前后端和 Courseworks toolbox 镜像；
-8. 初始化模型目录和超级用户；
-9. 建立受限 Docker 网络及相应 iptables 规则；
-10. 安装并启动 Courseworks、Homeworks、Slideshow systemd 服务；
-11. 将前端静态文件发布到 `/var/lib/aes/www`，安装 Nginx 统一入口并检查三个 HTTP 入口。
+2. 验证预先构建的 Courseworks toolbox 镜像；
+3. 限制 `superuser.toml` 和 `courseworks/.env` 的文件权限；
+4. 自动生成 MySQL 密码、JWT 密钥和两个 Flask 会话密钥；
+5. 创建 `vibeos_agent` 数据库及 `vibeos_user`；
+6. 创建持久化数据目录和 Python 虚拟环境；
+7. 安装 Python、Node.js 依赖并运行代码检查和测试；
+8. 执行 Prisma migration 并构建前后端；
+9. 初始化模型目录和超级用户；
+10. 建立受限 Docker 网络及相应 iptables 规则；
+11. 安装并启动 Courseworks、Homeworks、Slideshow systemd 服务；
+12. 将前端静态文件发布到 `/var/lib/aes/www`，安装 Nginx 统一入口并检查三个 HTTP 入口。
 
-首次构建 toolbox 镜像需要下载较多软件包，运行时间可能较长。脚本遇到错误会立即停止；修复错误后可以再次执行同一命令。已有的 `courseworks/.env` 和非示例 `superuser.toml` 不会被重新生成。脚本会将当前普通用户加入 `docker` 组；安装脚本可立即使用该组权限，但用户若要在当前终端直接执行 `docker`，通常需要注销并重新登录。
+脚本遇到错误会立即停止；修复错误后可以再次执行同一命令。已有的 `courseworks/.env` 和非示例 `superuser.toml` 不会被重新生成。脚本会将当前普通用户加入 `docker` 组；安装脚本可立即使用 Docker，用户若要在当前终端直接执行 `docker`，通常需要注销并重新登录。
+
+服务启动后，安装器会为每个 HTTP 入口等待最多 60 秒。入口持续不可用时，安装器会打印对应 systemd 服务状态和最近日志后停止。
 
 ### 使用其他端口
 
@@ -161,7 +234,7 @@ max_concurrent_requests_per_user = 1
 
 容器类型仍保留各自较低的内部默认值；这里配置的是统一安全上限，不会把轻量容器强行提升到该资源量。旧版本中不含这些分段的 `superuser.toml` 仍可启动，并会采用示例中的默认限制。
 
-## 4. 安装结果与配置
+## 5. 安装结果与配置
 
 安装完成后，脚本会打印访问地址。默认地址为：
 
@@ -209,7 +282,7 @@ sudo systemctl restart courseworks-backend homework slideshow
 sudo ufw allow 10001/tcp
 ```
 
-## 5. 安装后验证
+## 6. 安装后验证
 
 检查服务：
 
@@ -237,7 +310,7 @@ curl -I http://127.0.0.1:10001/slideshow/
 
 看到登录页只说明 Nginx 和前端入口可访问，不能代替完整验收。
 
-## 6. 配置 HTTPS
+## 7. 配置 HTTPS
 
 AES 默认提供 HTTP。生产环境应在 Nginx、负载均衡器或 NAS 反向代理上终止 TLS，再代理到 AES HTTP 端口。反向代理必须支持 WebSocket，并为以下接口保留较长超时：
 
@@ -246,7 +319,7 @@ AES 默认提供 HTTP。生产环境应在 Nginx、负载均衡器或 NAS 反向
 
 不要在没有 TLS 终止配置的情况下直接把 `https://` 指向 HTTP 端口。启用 HTTPS 后，应确认代理传递 `Host`、`X-Forwarded-For` 和 `X-Forwarded-Proto`。
 
-## 7. 恢复已有 AES 数据
+## 8. 恢复已有 AES 数据
 
 `install_script.sh` 默认按新系统初始化。迁移或复制已有 AES 时，先运行脚本完成程序和服务安装，再停止业务服务：
 
@@ -285,7 +358,7 @@ sudo ./install_script.sh
 
 如果目标机路径、数据库密码或网卡名不同，必须先调整恢复后的 `.env`。不要只复制 SQLite 或只导入 MySQL，否则统一账户、班级、作业和课件会不一致。
 
-## 8. 日常维护
+## 9. 日常维护
 
 查看日志：
 
@@ -304,9 +377,60 @@ git pull --ff-only
 sudo ./install_script.sh
 ```
 
-安装脚本会保留已有 `.env`、`superuser.toml` 和业务数据，重新安装依赖、执行测试和 migration、构建镜像与应用，并刷新 systemd/Nginx 配置。涉及数据库模型、toolbox、QEMU 或 noVNC 的升级不应跳过完整脚本。
+安装脚本会保留已有 `.env`、`superuser.toml` 和业务数据，重新安装依赖、执行测试和 migration、构建应用，并刷新 systemd/Nginx 配置。它不会重新构建 Docker 镜像。若升级包含 `courseworks/docker/toolbox/` 的改动，应先重新执行第 3 节的镜像构建与验证，再运行安装脚本。涉及数据库模型、toolbox、QEMU 或 noVNC 的升级不应跳过相应步骤。
 
-## 9. 常见问题
+## 10. 卸载 AES
+
+在仓库根目录执行：
+
+```bash
+cd "$HOME/aes"
+sudo ./uninstall_script.sh
+```
+
+不带参数运行时，脚本会显示交互式菜单：
+
+1. 删除服务、用户数据、数据库和 Docker 镜像；
+2. 只删除服务和运行部署，保留用户数据、数据库、配置和 Docker 镜像；
+3. 删除服务、用户数据和数据库，但保留 Docker 镜像；
+4. 退出，不执行任何操作。
+
+所有方式都会保留源码目录和 Ubuntu 共享软件包。菜单中的第 2 项与旧版默认行为一致：它会停止并删除 AES systemd 服务、Nginx 配置、AES 管理的临时容器、受限 Docker 网络、防火墙规则以及 `/var/lib/aes` 中的运行文件，同时保留数据库、上传文件、SQLite 数据、归档、学生工作区、`courseworks/.env` 和 toolbox 镜像。
+
+永久删除 AES 业务数据时必须显式确认：
+
+```bash
+sudo ./uninstall_script.sh --purge-data
+```
+
+同时删除 toolbox 镜像：
+
+```bash
+sudo ./uninstall_script.sh --purge-data --remove-image
+```
+
+自动化环境可增加 `--yes`，执行前可以使用 `--dry-run` 查看操作：
+
+```bash
+./uninstall_script.sh --purge-data --remove-image --yes --dry-run
+sudo ./uninstall_script.sh --purge-data --remove-image --yes
+```
+
+卸载脚本不会删除仓库本身。确认不再需要其中的 `superuser.toml` 和其他本地配置后，可由当前普通用户自行删除 `$HOME/aes`。
+
+## 11. 常见问题
+
+### 安装脚本提示缺少 toolbox 镜像
+
+主安装脚本不会访问 Docker Hub 或构建镜像。返回第 3 节，确保下面两项都成功后再重新运行安装脚本：
+
+```bash
+sudo docker image inspect courseworks-toolbox:latest
+sudo env DOCKER_TOOLBOX_IMAGE=courseworks-toolbox:latest \
+  bash courseworks/scripts/verify-images.sh
+```
+
+如果 `docker pull` 或 `docker build` 超时，应由服务器管理员配置 Docker daemon 的代理、DNS 或可信镜像加速器。
 
 ### 安装脚本提示缺少命令
 
