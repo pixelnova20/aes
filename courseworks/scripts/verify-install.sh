@@ -11,6 +11,8 @@ required=(
   "package-lock.json"
   "node_modules/.package-lock.json"
   "node_modules/.prisma/client/index.js"
+  "../management/dist/index.js"
+  "../management/dist/index.d.ts"
   "apps/server/src/build/app/server.js"
   "apps/web/dist/index.html"
 )

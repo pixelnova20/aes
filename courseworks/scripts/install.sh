@@ -49,6 +49,7 @@ fi
 
 run npm ci --ignore-scripts
 run npm run prisma:generate
+run npm run build:management
 run npm run deps:check
 run npm run check
 run npm test
