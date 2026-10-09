@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}调整截止时间{% endblock %}
+{% block content %}
+<div class="card-header">
+  <h2>调整截止时间</h2>
+  <a href="{{ url_for('teacher.assignment_detail', assignment_id=assignment.id) }}" class="btn btn-sm btn-secondary">返回</a>
+</div>
+
+<div class="card">
+  <p><strong>作业：</strong>{{ assignment.title }}</p>
+  <p><strong>班级：</strong>{{ assignment.klass.name }} · <strong>课程：</strong>{{ assignment.course.name }}</p>
+  <p><strong>当前截止时间：</strong>{{ assignment.due_at|dt }}</p>
+  {% if assignment.is_past_due %}
+  <div class="flash flash-info">该作业已经截止。设置未来时间后，尚未提交的学生将立即恢复提交权限。</div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('teacher.edit_assignment_deadline', assignment_id=assignment.id) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <div class="form-group">
+      <label for="due-at">新的截止时间</label>
+      <input
+        id="due-at"
+        type="datetime-local"
+        name="due_at"
+        class="form-control"
+        value="{{ assignment.due_at.strftime('%Y-%m-%dT%H:%M') if assignment.due_at else '' }}"
+        required
+      >
+    </div>
+    <button type="submit" class="btn btn-primary">保存截止时间</button>
+  </form>
+</div>
+{% endblock %}

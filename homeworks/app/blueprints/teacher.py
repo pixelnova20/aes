@@ -1,5 +1,4 @@
 """Teacher views: publish assignments, list them, and grade submissions."""
-import csv
 import io
 import os
 import shutil
@@ -17,6 +16,9 @@ from flask import (
     session,
     url_for,
 )
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from ..audit import log
 from ..chapter_upload import import_question_bank
@@ -565,6 +567,53 @@ def update_assignment(assignment_id):
     return redirect(url_for("teacher.dashboard"))
 
 
+@bp.route("/assignments/<int:assignment_id>/deadline", methods=["GET", "POST"])
+@role_required("teacher")
+def edit_assignment_deadline(assignment_id):
+    assignment = _owned_assignment(assignment_id)
+    if assignment.status != "published":
+        flash("只有已发布的作业可以调整截止时间", "error")
+        return redirect(
+            url_for("teacher.assignment_detail", assignment_id=assignment.id)
+        )
+
+    if request.method == "GET":
+        return render_template(
+            "teacher/edit_assignment_deadline.html", assignment=assignment
+        )
+
+    due_at = _parse_due_at((request.form.get("due_at") or "").strip())
+    if due_at is False:
+        flash("截止时间格式无效", "error")
+        return redirect(
+            url_for("teacher.edit_assignment_deadline", assignment_id=assignment.id)
+        )
+    if due_at is None:
+        flash("请设置截止时间", "error")
+        return redirect(
+            url_for("teacher.edit_assignment_deadline", assignment_id=assignment.id)
+        )
+    if due_at <= datetime.now():
+        flash("新的截止时间必须在未来", "error")
+        return redirect(
+            url_for("teacher.edit_assignment_deadline", assignment_id=assignment.id)
+        )
+
+    previous_due_at = assignment.due_at
+    assignment.due_at = due_at
+    db_session.commit()
+    log(
+        "teacher.update_assignment_deadline",
+        f"assignment_id={assignment.id} "
+        f"old_due_at={previous_due_at.isoformat() if previous_due_at else 'none'} "
+        f"new_due_at={due_at.isoformat()}",
+    )
+    flash("作业截止时间已更新", "success")
+    return redirect(
+        url_for("teacher.assignment_detail", assignment_id=assignment.id)
+    )
+
+
 @bp.route("/assignments/<int:assignment_id>/delete", methods=["POST"])
 @role_required("teacher")
 def delete_assignment(assignment_id):
@@ -862,7 +911,7 @@ def _parse_score(raw):
 
 
 # --------------------------------------------------------------------------
-# Grade report CSV export
+# Grade report Excel export
 # --------------------------------------------------------------------------
 @bp.route("/export-grades")
 @role_required("teacher")
@@ -885,61 +934,148 @@ def export_grades():
             classes=classes,
         )
 
-    target_cids = [class_id]
-
-    rows = (
-        db_session.query(
-            Class.name,
-            Assignment.title,
-            User.student_no,
-            User.name,
-            User.email,
-            Submission.status,
-            Submission.submitted_at,
-            Submission.is_late,
-            Grade.score,
-            Grade.comment,
-        )
-        .select_from(Submission)
-        .join(Assignment)
-        .join(Class, Assignment.class_id == Class.id)
-        .join(User, Submission.student_id == User.id)
-        .outerjoin(
-            Grade,
-            (Grade.submission_id == Submission.id)
-            & (Grade.status == "submitted"),
-        )
-        .filter(Class.id.in_(target_cids))
-        .order_by(Class.name, Assignment.title, User.student_no)
+    target_class = db_session.get(Class, class_id)
+    assignments = (
+        db_session.query(Assignment)
+        .filter_by(class_id=class_id)
+        .order_by(Assignment.published_at, Assignment.created_at, Assignment.id)
         .all()
     )
+    assignment_ids = [assignment.id for assignment in assignments]
 
-    buf = io.StringIO()
-    # UTF-8 BOM for MS Excel compatibility
-    buf.write("﻿")
-    writer = csv.writer(buf)
-    writer.writerow(
-        [
-            "班级", "作业", "学号", "学生姓名", "邮箱",
-            "提交状态", "提交时间", "是否迟交", "分数", "评价",
-        ]
+    submissions = (
+        db_session.query(Submission)
+        .filter(Submission.assignment_id.in_(assignment_ids))
+        .all()
+        if assignment_ids
+        else []
     )
-    for r in rows:
-        writer.writerow(
-            [
-                r[0], r[1], r[2] or "", r[3], r[4],
-                r[5], r[6].strftime("%Y-%m-%d %H:%M") if r[6] else "",
-                "是" if r[7] else "否",
-                r[8], r[9] or "",
-            ]
+    submission_by_student_assignment = {
+        (submission.student_id, submission.assignment_id): submission
+        for submission in submissions
+    }
+    grade_by_submission = {
+        grade.submission_id: grade
+        for grade in (
+            db_session.query(Grade)
+            .filter(
+                Grade.submission_id.in_([submission.id for submission in submissions]),
+                Grade.status == "submitted",
+            )
+            .all()
+            if submissions
+            else []
         )
+    }
 
+    member_ids = {
+        membership.user_id
+        for membership in db_session.query(UserClassRole)
+        .filter_by(class_id=class_id, role_in_class="student")
+        .all()
+    }
+    # Retain historical submitters even if they are no longer active members.
+    student_ids = member_ids | {submission.student_id for submission in submissions}
+    students = (
+        db_session.query(User)
+        .filter(User.id.in_(student_ids))
+        .order_by(User.student_no, User.name, User.email)
+        .all()
+        if student_ids
+        else []
+    )
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "成绩"
+    fixed_headers = ["班级", "学号", "学生姓名", "邮箱"]
+    header_fill = PatternFill("solid", fgColor="355F75")
+    subheader_fill = PatternFill("solid", fgColor="DCE6F1")
+    header_font = Font(color="FFFFFF", bold=True)
+    subheader_font = Font(color="1F2937", bold=True)
+    thin_gray = Side(style="thin", color="CBD5E1")
+    cell_border = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
+
+    for column, label in enumerate(fixed_headers, start=1):
+        worksheet.merge_cells(start_row=1, start_column=column, end_row=2, end_column=column)
+        cell = worksheet.cell(row=1, column=column, value=label)
+        cell.fill = header_fill
+        cell.font = header_font
+
+    for offset, assignment in enumerate(assignments):
+        start_column = len(fixed_headers) + 1 + offset * 2
+        worksheet.merge_cells(
+            start_row=1,
+            start_column=start_column,
+            end_row=1,
+            end_column=start_column + 1,
+        )
+        assignment_cell = worksheet.cell(
+            row=1, column=start_column, value=assignment.title
+        )
+        assignment_cell.fill = header_fill
+        assignment_cell.font = header_font
+        for column, label in (
+            (start_column, "是否迟交"),
+            (start_column + 1, "成绩"),
+        ):
+            cell = worksheet.cell(row=2, column=column, value=label)
+            cell.fill = subheader_fill
+            cell.font = subheader_font
+
+    max_column = len(fixed_headers) + len(assignments) * 2
+    for row in worksheet.iter_rows(min_row=1, max_row=2, max_col=max_column):
+        for cell in row:
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = cell_border
+
+    for row_number, student in enumerate(students, start=3):
+        values = [target_class.name, student.student_no or "", student.name, student.email]
+        for column, value in enumerate(values, start=1):
+            cell = worksheet.cell(row=row_number, column=column, value=value)
+            cell.border = cell_border
+            cell.alignment = Alignment(vertical="center")
+
+        for offset, assignment in enumerate(assignments):
+            start_column = len(fixed_headers) + 1 + offset * 2
+            submission = submission_by_student_assignment.get((student.id, assignment.id))
+            submitted = submission is not None and submission.status in (
+                "submitted",
+                "graded",
+            )
+            late_value = "是" if submitted and submission.is_late else (
+                "否" if submitted else "未提交"
+            )
+            grade = grade_by_submission.get(submission.id) if submission else None
+            score_value = grade.score if grade is not None else None
+            late_cell = worksheet.cell(
+                row=row_number, column=start_column, value=late_value
+            )
+            score_cell = worksheet.cell(
+                row=row_number, column=start_column + 1, value=score_value
+            )
+            late_cell.alignment = Alignment(horizontal="center", vertical="center")
+            score_cell.alignment = Alignment(horizontal="center", vertical="center")
+            score_cell.number_format = "0.##"
+            late_cell.border = cell_border
+            score_cell.border = cell_border
+
+    worksheet.freeze_panes = "E3"
+    worksheet.row_dimensions[1].height = 28
+    worksheet.row_dimensions[2].height = 24
+    for column, width in enumerate((16, 16, 16, 30), start=1):
+        worksheet.column_dimensions[get_column_letter(column)].width = width
+    for column in range(len(fixed_headers) + 1, max_column + 1):
+        worksheet.column_dimensions[get_column_letter(column)].width = 13
+
+    buf = io.BytesIO()
+    workbook.save(buf)
     buf.seek(0)
     today = datetime.now().strftime("%Y-%m-%d")
     return Response(
         buf.getvalue(),
-        mimetype="text/csv; charset=utf-8",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f"attachment; filename=teacher-grades-{today}.csv",
+            "Content-Disposition": f"attachment; filename=teacher-grades-{today}.xlsx",
         },
     )

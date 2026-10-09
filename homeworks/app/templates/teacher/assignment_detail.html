@@ -16,6 +16,7 @@
       <button type="submit" class="btn btn-sm btn-danger">删除草稿</button>
     </form>
     {% elif assignment.status == 'published' %}
+    <a href="{{ url_for('teacher.edit_assignment_deadline', assignment_id=assignment.id) }}" class="btn btn-sm btn-primary">调整截止时间</a>
     <form method="post" action="{{ url_for('teacher.withdraw_assignment', assignment_id=assignment.id) }}" class="inline-form" onsubmit="return confirm('确认撤回作业“{{ assignment.title }}”吗？撤回后学生将无法查看或提交，已有作答和批改记录会保留。');">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-sm btn-warning">撤回</button>

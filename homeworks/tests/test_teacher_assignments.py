@@ -249,6 +249,115 @@ class TeacherAssignmentWithdrawalTest(unittest.TestCase):
             self.assertIsNotNone(db_session.get(Submission, self.submission_id))
         self.assertIn("可撤回作业".encode(), student.get("/student/").data)
 
+    def test_teacher_can_extend_a_past_due_published_assignment(self):
+        teacher = self.client_for(self.teacher_id)
+        student = self.client_for(self.student_id)
+
+        with self.app.app_context():
+            assignment = db_session.get(Assignment, self.assignment_id)
+            assignment.status = "published"
+            assignment.due_at = datetime.now() - timedelta(hours=1)
+            submission = db_session.get(Submission, self.submission_id)
+            submission.status = "saved"
+            submission.submitted_at = None
+            submission.is_late = False
+            db_session.commit()
+
+        detail = teacher.get(f"/teacher/assignments/{self.assignment_id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn("调整截止时间".encode(), detail.data)
+
+        edit_page = teacher.get(
+            f"/teacher/assignments/{self.assignment_id}/deadline"
+        )
+        self.assertEqual(edit_page.status_code, 200)
+        self.assertIn("尚未提交的学生将立即恢复提交权限".encode(), edit_page.data)
+        self.assertIn(
+            "已截止，无法提交".encode(),
+            student.get(f"/student/assignments/{self.assignment_id}").data,
+        )
+
+        new_due_at = (datetime.now() + timedelta(hours=4)).replace(
+            second=0, microsecond=0
+        )
+        response = teacher.post(
+            f"/teacher/assignments/{self.assignment_id}/deadline",
+            data={
+                "_csrf": "test-csrf",
+                "due_at": new_due_at.strftime("%Y-%m-%dT%H:%M"),
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("作业截止时间已更新".encode(), response.data)
+
+        with self.app.app_context():
+            assignment = db_session.get(Assignment, self.assignment_id)
+            self.assertEqual(assignment.due_at, new_due_at)
+            self.assertEqual(assignment.status, "published")
+            self.assertEqual(
+                db_session.get(Submission, self.submission_id).status, "saved"
+            )
+
+        student_page = student.get(f"/student/assignments/{self.assignment_id}")
+        self.assertNotIn("已截止，无法提交".encode(), student_page.data)
+
+        response = student.post(
+            f"/student/assignments/{self.assignment_id}/submit",
+            data={"_csrf": "test-csrf"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("作业已提交成功".encode(), response.data)
+
+        with self.app.app_context():
+            submission = db_session.get(Submission, self.submission_id)
+            submission.status = "saved"
+            submission.submitted_at = None
+            submission.is_late = False
+            db_session.commit()
+
+    def test_deadline_update_rejects_past_time_and_other_teacher(self):
+        teacher = self.client_for(self.teacher_id)
+        other_teacher = self.client_for(self.other_teacher_id)
+        with self.app.app_context():
+            assignment = db_session.get(Assignment, self.assignment_id)
+            assignment.status = "published"
+            assignment.due_at = (datetime.now() + timedelta(days=2)).replace(
+                second=0, microsecond=0
+            )
+            db_session.commit()
+            original_due_at = assignment.due_at
+
+        response = teacher.post(
+            f"/teacher/assignments/{self.assignment_id}/deadline",
+            data={
+                "_csrf": "test-csrf",
+                "due_at": (datetime.now() - timedelta(minutes=1)).strftime(
+                    "%Y-%m-%dT%H:%M"
+                ),
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("新的截止时间必须在未来".encode(), response.data)
+
+        response = other_teacher.post(
+            f"/teacher/assignments/{self.assignment_id}/deadline",
+            data={
+                "_csrf": "test-csrf",
+                "due_at": (datetime.now() + timedelta(days=3)).strftime(
+                    "%Y-%m-%dT%H:%M"
+                ),
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        with self.app.app_context():
+            self.assertEqual(
+                db_session.get(Assignment, self.assignment_id).due_at,
+                original_due_at,
+            )
+
     def test_draft_with_answers_can_be_confirmed_and_deleted(self):
         relative_path = "student-one/delete-with-assignment.png"
         full_path = os.path.join(self.upload_dir, relative_path)
