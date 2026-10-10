@@ -12,8 +12,10 @@
   <p><strong>课程：</strong>{{ assignment.course.name }} · <strong>章节：</strong>第{{ assignment.chapter.chapter_number }}章</p>
   <p><strong>截止时间：</strong>{{ assignment.due_at|dt }}</p>
   <p><strong>状态：</strong><span class="badge badge-{{ submission.status }}">{{ submission.status_label }}</span></p>
-  {% if is_past_due and can_edit %}
+  {% if is_past_due and can_edit and not can_submit %}
   <p class="text-muted" style="color:#e74c3c;">⚠ 已超过截止时间，你仍可暂存但无法提交。</p>
+  {% elif is_past_due and can_submit %}
+  <p><span class="badge badge-saved">教师已开放{{ '重交' if submission.submitted_at else '补交' }}</span></p>
   {% endif %}
   {% if submission.is_late %}<p><span class="badge badge-closed">⚠ 迟交</span></p>{% endif %}
   {% if assignment.description %}<p><strong>说明：</strong>{{ assignment.description }}</p>{% endif %}
@@ -100,9 +102,9 @@
   <div class="mt-16">
     <button type="submit" class="btn btn-secondary" formaction="{{ url_for('student.save', assignment_id=assignment.id) }}">暂存</button>
     <button type="submit" class="btn btn-success" formaction="{{ url_for('student.submit', assignment_id=assignment.id) }}"
-      {% if is_past_due %}disabled title="已超过截止时间"{% endif %}
+      {% if not can_submit %}disabled title="已超过截止时间"{% endif %}
       onclick="return confirm('确认提交？提交后默认不可修改。')">提交</button>
-    {% if is_past_due %}<small class="text-muted" style="color:#e74c3c;">已截止，无法提交</small>{% endif %}
+    {% if not can_submit %}<small class="text-muted" style="color:#e74c3c;">已截止，无法提交</small>{% endif %}
   </div>
   {% endif %}
 </form>

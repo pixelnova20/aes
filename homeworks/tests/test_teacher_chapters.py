@@ -9,6 +9,7 @@ import jwt
 
 from config import Config
 from app import create_app
+from app.chapter_upload import _decode_zip_member_name
 from app.database import db_session
 from app.models import (
     Assignment,
@@ -166,6 +167,114 @@ class TeacherChapterTest(unittest.TestCase):
             self.app.config["SSO_JWT_SECRET"],
             algorithm="HS256",
         )
+
+    def _create_chapter(self, number, title):
+        with self.app.app_context():
+            chapter = Chapter(
+                course_id=self.own_course_id,
+                chapter_number=number,
+                title=title,
+            )
+            db_session.add(chapter)
+            db_session.commit()
+            return chapter.id
+
+    def test_chinese_zip_name_and_legacy_chapter_layout(self):
+        chapter_id = self._create_chapter(20, "进程管理")
+        markdown = (
+            "# 作业题\n\n"
+            "## 第四章\n\n"
+            "1. 第一题\n\n![状态图](图4-1-状态图.jpg)\n\n"
+            "2. 第二题\n"
+        )
+        archive_buffer = io.BytesIO()
+        with zipfile.ZipFile(archive_buffer, "w") as archive:
+            archive.writestr("第四章习题.md", markdown)
+            archive.writestr("图4-1-状态图.jpg", b"legacy-image")
+        archive_buffer.seek(0)
+
+        response = self.client.post(
+            f"/teacher/chapters/{chapter_id}/questions",
+            data={
+                "_csrf": "test-csrf",
+                "question_bank": (archive_buffer, "第四章.zip"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("解析成功：共 2 道题，自动引入 1 张图片".encode(), response.data)
+
+        with self.app.app_context():
+            chapter = db_session.get(Chapter, chapter_id)
+            self.assertEqual(chapter.title, "进程管理")
+            self.assertEqual(chapter.parse_status, "parsed")
+            self.assertIn("第四章.zip", chapter.markdown_original_name)
+            questions = (
+                db_session.query(Question)
+                .filter_by(chapter_id=chapter_id)
+                .order_by(Question.question_number)
+                .all()
+            )
+            self.assertEqual(len(questions), 2)
+            self.assertEqual([question.type for question in questions], [
+                "comprehensive",
+                "comprehensive",
+            ])
+
+        resource_dir = os.path.join(
+            self.app.config["CHAPTER_UPLOAD_DIR"], str(chapter_id)
+        )
+        self.assertTrue(os.path.isfile(os.path.join(resource_dir, "question-bank.md")))
+        with open(os.path.join(resource_dir, "图4-1-状态图.jpg"), "rb") as image:
+            self.assertEqual(image.read(), b"legacy-image")
+
+        with self.app.app_context():
+            original_questions = [
+                (question.id, question.stem_markdown)
+                for question in db_session.query(Question)
+                .filter_by(chapter_id=chapter_id)
+                .order_by(Question.question_number)
+                .all()
+            ]
+            chapter = db_session.get(Chapter, chapter_id)
+            original_markdown_path = chapter.markdown_path
+            original_name = chapter.markdown_original_name
+
+        invalid = io.BytesIO("# 无法解析的题库\n\n没有编号题目\n".encode("utf-8"))
+        failed = self.client.post(
+            f"/teacher/chapters/{chapter_id}/questions",
+            data={
+                "_csrf": "test-csrf",
+                "question_bank": (invalid, "错误题库.md"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertIn("未识别到题目".encode(), failed.data)
+        with self.app.app_context():
+            chapter = db_session.get(Chapter, chapter_id)
+            self.assertEqual(chapter.parse_status, "parsed")
+            self.assertEqual(chapter.markdown_path, original_markdown_path)
+            self.assertEqual(chapter.markdown_original_name, original_name)
+            self.assertEqual(
+                [
+                    (question.id, question.stem_markdown)
+                    for question in db_session.query(Question)
+                    .filter_by(chapter_id=chapter_id)
+                    .order_by(Question.question_number)
+                    .all()
+                ],
+                original_questions,
+            )
+        with open(os.path.join(resource_dir, "图4-1-状态图.jpg"), "rb") as image:
+            self.assertEqual(image.read(), b"legacy-image")
+
+    def test_legacy_gbk_zip_member_name_is_recovered(self):
+        expected = "图4-31-进程状态变迁图.jpg"
+        member = zipfile.ZipInfo(expected.encode("gbk").decode("cp437"))
+        member.flag_bits = 0
+        self.assertEqual(_decode_zip_member_name(member), expected)
 
     def test_question_bank_follows_current_class_from_sso(self):
         response = self.client.get(f"/sso?token={self._sso_token('TEACHER-ONE-002')}")

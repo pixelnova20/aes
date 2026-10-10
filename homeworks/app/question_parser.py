@@ -8,6 +8,7 @@ protected chapter-image endpoint).
 import os
 import re
 import shutil
+import unicodedata
 from urllib.parse import quote
 
 import markdown as md
@@ -112,7 +113,12 @@ def parse_markdown(text):
         sections.append(current)
 
     questions = []
+    has_typed_section = any(qtype is not None for qtype, _body in sections)
     for qtype, body in sections:
+        # Legacy banks often use the chapter name as their sole H2 and list
+        # all questions directly beneath it. Treat those as comprehensive.
+        if qtype is None and not has_typed_section:
+            qtype = "comprehensive"
         if qtype is None:
             continue
         for num, qlines in _split_questions(body):
@@ -161,12 +167,20 @@ def _append_rel(seen, path):
 
 
 def ingest_referenced_images(md_text, source_root, dest_root):
+    source_root = os.path.realpath(source_root)
+    dest_root = os.path.realpath(dest_root)
     copied = 0
     for rel in extract_image_relpaths(md_text):
-        src = os.path.join(source_root, rel)
+        normalized_rel = unicodedata.normalize("NFC", rel).replace("\\", "/")
+        src = os.path.realpath(os.path.join(source_root, normalized_rel))
+        dest = os.path.realpath(os.path.join(dest_root, normalized_rel))
+        if (
+            os.path.commonpath([source_root, src]) != source_root
+            or os.path.commonpath([dest_root, dest]) != dest_root
+        ):
+            continue
         if not os.path.isfile(src):
             continue
-        dest = os.path.join(dest_root, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         if not os.path.exists(dest):
             shutil.copyfile(src, dest)
@@ -184,13 +198,16 @@ def delete_chapter_questions(chapter_id):
     questions = db_session.query(Question).filter_by(chapter_id=chapter_id).all()
     for q in questions:
         db_session.delete(q)
-    db_session.commit()
 
 
 def import_chapter_questions(chapter_id, md_text):
-    delete_chapter_questions(chapter_id)
-
     title, questions = parse_markdown(md_text)
+    if not questions:
+        raise ValueError(
+            "未识别到题目；请使用题型二级标题，或在章节二级标题下使用“1. ”格式编号"
+        )
+
+    delete_chapter_questions(chapter_id)
     for qtype, num, lines in questions:
         q = Question(
             chapter_id=chapter_id,
@@ -221,5 +238,5 @@ def import_chapter_questions(chapter_id, md_text):
             q.stem_html = render_markdown(q.stem_markdown, chapter_id)
             db_session.add(q)
 
-    db_session.commit()
+    db_session.flush()
     return len(questions), title

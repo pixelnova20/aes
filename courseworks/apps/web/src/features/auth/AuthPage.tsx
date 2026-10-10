@@ -143,7 +143,15 @@ export function AuthPage() {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="auth-header">
-          <h1>AES（AI-assisted Education System）</h1>
+          <h1>AES (AI-assisted Education System)</h1>
+          <a
+            className="auth-open-source"
+            href="https://github.com/pixelnova20/aes"
+            rel="noreferrer"
+            target="_blank"
+          >
+            AES 已开源：GitHub · pixelnova20/aes
+          </a>
           <p>面向课程教学、实验和作业管理的一体化平台</p>
         </div>
 

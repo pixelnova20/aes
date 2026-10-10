@@ -149,6 +149,7 @@ def answer_page(assignment_id):
         and submission.status in ("not_started", "saved")
     )
     is_past_due = assignment.due_at is not None and datetime.now() > assignment.due_at
+    can_submit = can_edit and (not is_past_due or submission.deadline_override)
 
     return render_template(
         "student/answer.html",
@@ -161,6 +162,7 @@ def answer_page(assignment_id):
         ai_review_mode=ai_review_mode,
         is_historical=assignment.status != "published",
         is_past_due=is_past_due,
+        can_submit=can_submit,
     )
 
 
@@ -320,19 +322,21 @@ def _save_or_submit(assignment_id, target_status):
         flash("该作业尚未发布", "error")
         return redirect(url_for("student.answer_page", assignment_id=assignment_id))
 
-    # Due time enforcement for submit
-    if target_status == "submitted":
-        if assignment.due_at is not None and datetime.now() > assignment.due_at:
-            flash("作业已截止，无法提交", "error")
-            return redirect(
-                url_for("student.answer_page", assignment_id=assignment_id)
-            )
-
     submission = get_submission(assignment.id, user.id)
     if submission is None:
         submission = ensure_submission(assignment, user)
     if submission.status not in ("not_started", "saved"):
         flash("作业已提交，无法修改", "error")
+        return redirect(url_for("student.answer_page", assignment_id=assignment_id))
+
+    # A teacher may grant this student one submission after the class deadline.
+    if (
+        target_status == "submitted"
+        and assignment.due_at is not None
+        and datetime.now() > assignment.due_at
+        and not submission.deadline_override
+    ):
+        flash("作业已截止，无法提交", "error")
         return redirect(url_for("student.answer_page", assignment_id=assignment_id))
 
     aqs = (
@@ -368,6 +372,7 @@ def _save_or_submit(assignment_id, target_status):
     submission.updated_at = datetime.now()
     if target_status == "submitted":
         submission.submitted_at = datetime.now()
+        submission.deadline_override = False
         # Mark late if past due
         if assignment.due_at is not None and submission.submitted_at > assignment.due_at:
             submission.is_late = True

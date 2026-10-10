@@ -21,6 +21,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash
 
 from ..audit import log
+from ..chapter_upload import import_question_bank
 from ..database import db_session
 from ..decorators import role_required
 from ..models import (
@@ -430,118 +431,13 @@ def upload_markdown(chapter_id):
         flash("章节不存在", "error")
         return redirect(url_for("admin.courses"))
 
-    file = request.files.get("markdown")
-    if file is None or not file.filename:
-        flash("请选择一个文件", "error")
-        return redirect(url_for("admin.chapters", course_id=chapter.course_id))
-
-    name = secure_filename(file.filename)
-    ext = os.path.splitext(name)[1].lower()
-
-    if ext not in (".md", ".zip"):
-        flash("仅支持 .md 或 .zip 文件", "error")
-        return redirect(url_for("admin.chapters", course_id=chapter.course_id))
-
-    dest_dir = chapter_resource_dir(chapter.id)
-    os.makedirs(dest_dir, exist_ok=True)
-
-    if ext == ".zip":
-        # ZIP 压缩包：解压后提取 MD 和图片
-        import shutil
-        import tempfile
-        import zipfile
-
-        tmpdir = tempfile.mkdtemp()
-        try:
-            # SpooledTemporaryFile (Flask's file.stream) does not have
-            # .seekable() in Python 3.10, which zipfile requires.  Save
-            # to a real temp file first.
-            tmp_zip_path = os.path.join(tmpdir, "_upload.zip")
-            file.save(tmp_zip_path)
-            with zipfile.ZipFile(tmp_zip_path) as zf:
-                zf.extractall(tmpdir)
-
-            # Find the .md file inside the ZIP (walk the tree)
-            md_path = None
-            for root, dirs, files in os.walk(tmpdir):
-                for fname in files:
-                    if fname.lower().endswith(".md"):
-                        md_path = os.path.join(root, fname)
-                        break
-                if md_path:
-                    break
-
-            if md_path is None:
-                flash("ZIP 文件中未找到 .md 文件", "error")
-                return redirect(
-                    url_for("admin.chapters", course_id=chapter.course_id)
-                )
-
-            # Read the MD content
-            with open(md_path, "r", encoding="utf-8") as fh:
-                md_text = fh.read()
-
-            # Save the MD file to the chapter resource directory
-            md_basename = os.path.basename(md_path)
-            dest_md_path = os.path.join(dest_dir, secure_filename(md_basename))
-            shutil.copyfile(md_path, dest_md_path)
-
-            # Ingest images from the extracted ZIP tree
-            ingested = ingest_referenced_images(
-                md_text,
-                tmpdir,  # source_root: the ZIP extraction root
-                dest_dir,  # dest_root: chapter resource directory
-            )
-
-            dest_path = dest_md_path
-            original_name = file.filename + " → " + md_basename
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-    else:
-        # Plain .md file
-        if ext != ".md" and file.mimetype not in ("text/markdown", "text/plain"):
-            flash("仅支持 .md 或 text/markdown 文件", "error")
-            return redirect(url_for("admin.chapters", course_id=chapter.course_id))
-
-        dest_path = os.path.join(dest_dir, name)
-        file.save(dest_path)
-
-        with open(dest_path, "r", encoding="utf-8") as fh:
-            md_text = fh.read()
-        ingested = ingest_referenced_images(
-            md_text,
-            current_app.config["SOURCE_QUESTION_BANK_DIR"],
-            dest_dir,
-        )
-        original_name = file.filename
-
     try:
-        count, title = import_chapter_questions(chapter.id, md_text)
-
-        chapter.markdown_path = dest_path
-        chapter.markdown_original_name = original_name
-        chapter.markdown_uploaded_at = datetime.now()
-        if title:
-            chapter.title = title
-        chapter.parse_status = "parsed"
-        db_session.commit()
-        log(
-            "admin.upload_markdown",
-            f"chapter_id={chapter_id} questions={count} ingested={ingested}",
-        )
-
-        flash(
-            f"解析成功：共 {count} 道题"
-            + (f"，自动引入 {ingested} 张图片" if ingested else ""),
-            "success",
-        )
-    except Exception as exc:  # noqa: BLE001
-        chapter.markdown_path = dest_path
-        chapter.markdown_original_name = original_name
-        chapter.markdown_uploaded_at = datetime.now()
-        chapter.parse_status = "parse_failed"
-        db_session.commit()
-        flash(f"解析失败：{exc}", "error")
+        message = import_question_bank(chapter, request.files.get("markdown"))
+    except (OSError, UnicodeError, ValueError) as error:
+        flash(str(error), "error")
+    else:
+        log("admin.upload_markdown", f"chapter_id={chapter_id}")
+        flash(message, "success")
 
     return redirect(url_for("admin.chapters", course_id=chapter.course_id))
 

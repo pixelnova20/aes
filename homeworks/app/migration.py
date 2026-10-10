@@ -293,6 +293,24 @@ def migrate_grading_status():
     _record_migration(version)
 
 
+def migrate_submission_deadline_override():
+    """Allow a teacher to reopen one student's submission after the deadline."""
+    version = "submission_deadline_override"
+    if _migration_applied(version):
+        return
+
+    if not _column_exists("submissions", "deadline_override"):
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE submissions ADD COLUMN deadline_override BOOLEAN "
+                "NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+    _record_migration(version)
+
+
 def run_migrations():
     """Run all pending migrations."""
     lock_path = current_app.config["COURSE_DATABASE"] + ".migration.lock"
@@ -306,6 +324,7 @@ def run_migrations():
             migrate_deduplicate_owned_courses()
             migrate_answer_grader_comments()
             migrate_grading_status()
+            migrate_submission_deadline_override()
             migrate_user_class_roles()
             migrate_create_upload_dirs()
         finally:

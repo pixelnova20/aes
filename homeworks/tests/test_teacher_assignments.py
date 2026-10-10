@@ -358,6 +358,127 @@ class TeacherAssignmentWithdrawalTest(unittest.TestCase):
                 original_due_at,
             )
 
+    def test_teacher_can_allow_makeup_then_reopen_a_late_submission(self):
+        with self.app.app_context():
+            assignment = Assignment(
+                title="补交测试作业",
+                course_id=self.course_id,
+                chapter_id=self.chapter_id,
+                class_id=self.class_id,
+                publisher_id=self.teacher_id,
+                due_at=datetime.now() - timedelta(hours=1),
+                status="published",
+                published_at=datetime.now() - timedelta(days=1),
+            )
+            db_session.add(assignment)
+            db_session.flush()
+            question = db_session.get(Question, self.question_one_id)
+            assignment_question = AssignmentQuestion(
+                assignment_id=assignment.id,
+                question_id=question.id,
+                sort_order=0,
+                question_number=question.question_number,
+                type=question.type,
+                stem_markdown=question.stem_markdown,
+                stem_html=question.stem_html,
+            )
+            db_session.add(assignment_question)
+            db_session.flush()
+            snapshot_question_to_aq(assignment_question, question)
+            db_session.commit()
+            assignment_id = assignment.id
+            question_id = assignment_question.id
+
+        teacher = self.client_for(self.teacher_id)
+        student = self.client_for(self.student_id)
+        other_teacher = self.client_for(self.other_teacher_id)
+
+        detail = teacher.get(f"/teacher/assignments/{assignment_id}")
+        self.assertIn("开放补交".encode(), detail.data)
+        self.assertNotIn("开放重交".encode(), detail.data)
+
+        blocked = student.post(
+            f"/student/assignments/{assignment_id}/submit",
+            data={"_csrf": "test-csrf", f"q_{question_id}": "补交答案"},
+            follow_redirects=True,
+        )
+        self.assertIn("作业已截止，无法提交".encode(), blocked.data)
+
+        forbidden = other_teacher.post(
+            f"/teacher/assignments/{assignment_id}/makeup/{self.student_id}",
+            data={"_csrf": "test-csrf"},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        allowed = teacher.post(
+            f"/teacher/assignments/{assignment_id}/makeup/{self.student_id}",
+            data={"_csrf": "test-csrf"},
+            follow_redirects=True,
+        )
+        self.assertIn("已开放补交".encode(), allowed.data)
+        student_page = student.get(f"/student/assignments/{assignment_id}")
+        self.assertIn("教师已开放补交".encode(), student_page.data)
+        self.assertNotIn("已截止，无法提交".encode(), student_page.data)
+
+        submitted = student.post(
+            f"/student/assignments/{assignment_id}/submit",
+            data={"_csrf": "test-csrf", f"q_{question_id}": "补交答案"},
+            follow_redirects=True,
+        )
+        self.assertIn("作业已提交成功".encode(), submitted.data)
+        with self.app.app_context():
+            submission = (
+                db_session.query(Submission)
+                .filter_by(assignment_id=assignment_id, student_id=self.student_id)
+                .one()
+            )
+            self.assertEqual(submission.status, "submitted")
+            self.assertTrue(submission.is_late)
+            self.assertFalse(submission.deadline_override)
+
+        detail = teacher.get(f"/teacher/assignments/{assignment_id}")
+        self.assertIn("开放重交".encode(), detail.data)
+        self.assertNotIn("开放补交".encode(), detail.data)
+
+        reopened = teacher.post(
+            f"/teacher/assignments/{assignment_id}/reopen/{self.student_id}",
+            data={"_csrf": "test-csrf"},
+            follow_redirects=True,
+        )
+        self.assertIn("已开放重交".encode(), reopened.data)
+        with self.app.app_context():
+            submission = (
+                db_session.query(Submission)
+                .filter_by(assignment_id=assignment_id, student_id=self.student_id)
+                .one()
+            )
+            self.assertEqual(submission.status, "saved")
+            self.assertTrue(submission.deadline_override)
+
+        reopened_detail = teacher.get(f"/teacher/assignments/{assignment_id}")
+        self.assertIn("已开放重交".encode(), reopened_detail.data)
+        self.assertNotIn("已开放补交".encode(), reopened_detail.data)
+        reopened_student_page = student.get(
+            f"/student/assignments/{assignment_id}"
+        )
+        self.assertIn("教师已开放重交".encode(), reopened_student_page.data)
+        self.assertNotIn("教师已开放补交".encode(), reopened_student_page.data)
+
+        resubmitted = student.post(
+            f"/student/assignments/{assignment_id}/submit",
+            data={"_csrf": "test-csrf", f"q_{question_id}": "重交答案"},
+            follow_redirects=True,
+        )
+        self.assertIn("作业已提交成功".encode(), resubmitted.data)
+        with self.app.app_context():
+            submission = (
+                db_session.query(Submission)
+                .filter_by(assignment_id=assignment_id, student_id=self.student_id)
+                .one()
+            )
+            self.assertEqual(submission.status, "submitted")
+            self.assertFalse(submission.deadline_override)
+
     def test_draft_with_answers_can_be_confirmed_and_deleted(self):
         relative_path = "student-one/delete-with-assignment.png"
         full_path = os.path.join(self.upload_dir, relative_path)
@@ -488,10 +609,9 @@ class TeacherAssignmentWithdrawalTest(unittest.TestCase):
             headers={"X-Forwarded-Prefix": "/homeworks"},
         )
         self.assertEqual(detail.status_code, 200)
-        self.assertIn(">返回</button>".encode(), detail.data)
-        self.assertNotIn("作业列表".encode(), detail.data)
-        self.assertIn(b'data-fallback-url="/homeworks/teacher/"', detail.data)
-        self.assertIn(b"window.history.back()", detail.data)
+        self.assertIn(b'href="/homeworks/teacher/"', detail.data)
+        self.assertIn(">返回</a>".encode(), detail.data)
+        self.assertNotIn(b"window.history.back()", detail.data)
         self.assertIn("编辑".encode(), detail.data)
         self.assertIn("删除草稿".encode(), detail.data)
 

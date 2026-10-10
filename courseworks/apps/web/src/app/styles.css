@@ -1375,6 +1375,51 @@ button {
   margin: 0 0 8px;
 }
 
+.auth-header h1 {
+  font-size: 27px;
+  line-height: 1.25;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.auth-open-source {
+  color: #2563eb;
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-decoration: none;
+}
+
+.auth-open-source:hover,
+.auth-open-source:focus-visible {
+  text-decoration: underline;
+}
+
+.auth-header p {
+  margin: 8px 0 0;
+}
+
+@media (max-width: 620px) {
+  .auth-shell {
+    padding: 16px;
+  }
+
+  .auth-card {
+    padding: 22px;
+  }
+
+  .auth-header h1 {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 440px) {
+  .auth-header h1 {
+    font-size: 14px;
+  }
+}
+
 .segmented {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

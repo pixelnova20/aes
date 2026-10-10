@@ -4,7 +4,7 @@
 <div class="card-header">
   <h2>{{ assignment.title }}</h2>
   <div>
-    <button type="button" class="btn btn-sm btn-secondary" data-fallback-url="{{ url_for('teacher.dashboard') }}" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = this.dataset.fallbackUrl; }">返回</button>
+    <a href="{{ url_for('teacher.dashboard') }}" class="btn btn-sm btn-secondary">返回</a>
     {% if assignment.status == 'draft' %}
     <a href="{{ url_for('teacher.edit_assignment', assignment_id=assignment.id) }}" class="btn btn-sm btn-primary">编辑</a>
     <form method="post" action="{{ url_for('teacher.publish_draft', assignment_id=assignment.id) }}" class="inline-form">
@@ -53,6 +53,24 @@
           <form method="post" action="{{ url_for('teacher.reopen_submission', assignment_id=assignment.id, student_id=student.id) }}" class="inline-form">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-warning" onclick="return confirm('确认开放重交？')">开放重交</button>
+          </form>
+          {% endif %}
+          {% elif assignment.status == 'published' and assignment.is_past_due and submission and submission.submitted_at %}
+          {% if submission.deadline_override %}
+          <button type="button" class="btn btn-sm btn-warning" disabled>已开放重交</button>
+          {% else %}
+          <form method="post" action="{{ url_for('teacher.reopen_submission', assignment_id=assignment.id, student_id=student.id) }}" class="inline-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-warning" onclick="return confirm('确认开放重交？')">开放重交</button>
+          </form>
+          {% endif %}
+          {% elif assignment.status == 'published' and assignment.is_past_due %}
+          {% if submission and submission.deadline_override %}
+          <button type="button" class="btn btn-sm btn-danger" disabled>已开放补交</button>
+          {% else %}
+          <form method="post" action="{{ url_for('teacher.allow_makeup_submission', assignment_id=assignment.id, student_id=student.id) }}" class="inline-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('确认允许该学生补交？')">开放补交</button>
           </form>
           {% endif %}
           {% endif %}

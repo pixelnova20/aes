@@ -27,6 +27,7 @@ from ..database import db_session
 from ..decorators import role_required
 from ..helpers import (
     build_grade_context,
+    ensure_submission,
     get_grade,
     get_submission,
     get_user_classes,
@@ -887,14 +888,58 @@ def reopen_submission(assignment_id, student_id):
         abort(403)
 
     submission = get_submission(assignment_id, student_id)
-    if submission is not None and submission.status in ("submitted", "graded"):
+    can_reopen = submission is not None and (
+        submission.status in ("submitted", "graded")
+        or (submission.status == "saved" and submission.submitted_at is not None)
+    )
+    if can_reopen:
         submission.status = "saved"
+        submission.deadline_override = assignment.is_past_due
         db_session.commit()
         log(
             "teacher.reopen_submission",
             f"assignment_id={assignment_id} student_id={student_id}",
         )
         flash("已开放重交", "success")
+    return redirect(
+        url_for("teacher.assignment_detail", assignment_id=assignment_id)
+    )
+
+
+@bp.route(
+    "/assignments/<int:assignment_id>/makeup/<int:student_id>", methods=["POST"]
+)
+@role_required("teacher")
+def allow_makeup_submission(assignment_id, student_id):
+    assignment = _owned_assignment(assignment_id)
+    if assignment.status != "published" or not assignment.is_past_due:
+        flash("只有已截止的作业可以开放补交", "error")
+        return redirect(
+            url_for("teacher.assignment_detail", assignment_id=assignment_id)
+        )
+
+    student = db_session.get(User, student_id)
+    if student is None or not user_has_class_access(
+        student, assignment.class_id, "student"
+    ):
+        abort(403)
+
+    submission = get_submission(assignment_id, student_id)
+    if submission is None:
+        submission = ensure_submission(assignment, student)
+    if submission.status not in ("not_started", "saved"):
+        flash("该学生已经提交作业，请使用开放重交", "error")
+        return redirect(
+            url_for("teacher.assignment_detail", assignment_id=assignment_id)
+        )
+
+    submission.deadline_override = True
+    db_session.commit()
+    log(
+        "teacher.allow_makeup_submission",
+        f"assignment_id={assignment_id} student_id={student_id}",
+    )
+    flash("已开放补交", "success")
     return redirect(
         url_for("teacher.assignment_detail", assignment_id=assignment_id)
     )

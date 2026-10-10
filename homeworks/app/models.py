@@ -333,6 +333,7 @@ class Submission(Base):
     first_saved_at = Column(DateTime, nullable=True)
     submitted_at = Column(DateTime, nullable=True)
     is_late = Column(Boolean, nullable=False, default=False)
+    deadline_override = Column(Boolean, nullable=False, default=False)
     updated_at = Column(DateTime, nullable=False, default=now, onupdate=now)
 
     assignment = relationship("Assignment", backref="submissions")

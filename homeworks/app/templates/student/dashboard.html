@@ -16,8 +16,9 @@
   <div class="card">
     <h3><a href="{{ url_for('student.answer_page', assignment_id=a.id) }}">{{ a.title }}</a></h3>
     <p class="text-muted">{{ a.course.name }} · 第{{ a.chapter.chapter_number }}章 · {{ a.klass.name }}</p>
-    <p>截止：{{ a.due_at|dt }}{% if a.is_past_due and status != 'submitted' %} <span style="color:#e74c3c;">⚠ 已截止</span>{% endif %}</p>
+    <p>截止：{{ a.due_at|dt }}{% if a.is_past_due and not (sub and sub.deadline_override) %} <span style="color:#e74c3c;">⚠ 已截止</span>{% endif %}</p>
     <span class="badge badge-{{ status }}">{{ {'not_started': '未开始', 'saved': '暂存', 'submitted': '已提交'}.get(status, status) }}</span>
+    {% if sub and sub.deadline_override %}<span class="badge badge-saved">已开放{{ '重交' if sub.submitted_at else '补交' }}</span>{% endif %}
     {% if sub and sub.is_late %}<span class="badge badge-closed" style="margin-left:4px;">迟交</span>{% endif %}
   </div>
   {% endfor %}
