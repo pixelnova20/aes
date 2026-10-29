@@ -8,6 +8,8 @@ export {
   syncHomeworksUser,
 } from "./homeworks-account-store.js";
 export { isUserRole, USER_ROLES, type UserRole } from "./role-policy.js";
+export { aesRoot, productionDataRoot, logRoot } from "./runtime-paths.js";
+export { createEventLogger } from "./event-log.js";
 
 export {
   archiveAndDeleteManagedUsers,

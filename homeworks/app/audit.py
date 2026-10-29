@@ -2,6 +2,7 @@
 from .database import db_session
 from .models import AuditLog
 from .auth_utils import current_user
+from aes_logging import emit
 
 
 def log(action, detail=None):
@@ -15,3 +16,4 @@ def log(action, detail=None):
         )
     )
     db_session.commit()
+    emit("homeworks", "operation", action=action, userId=user.id if user else None)

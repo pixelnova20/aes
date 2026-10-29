@@ -4,6 +4,7 @@
  * 重要函数：本文件以类型、常量、导出装配或启动副作用为主，不包含独立具名函数。
  */
 import { Router } from "express";
+import { systemMonitorSnapshot } from "../../../application/admin/system-monitor.js";
 import { z } from "zod";
 
 import {
@@ -38,6 +39,10 @@ const adminStatusSchema = z.object({ isActive: z.boolean() });
  * 调用关系：由 Express 在路由命中时调用；内部委托 application service 或模块公共 API。
  */
 router.use(requireAuth, requireRoles(USER_ROLES.superAdmin));
+router.get("/monitor", async (_request, response, next) => {
+  try { response.setHeader("Cache-Control", "no-store"); response.json(await systemMonitorSnapshot()); }
+  catch(error) { next(error); }
+});
 
 /**
  * 功能：处理 GET /summary 请求并把结果转换为 HTTP 响应。

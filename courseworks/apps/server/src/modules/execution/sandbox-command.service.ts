@@ -12,6 +12,8 @@ import { config } from "../../config/index.js";
 import { SANDBOX_UPLOADS_PATH, uploadsRoot } from "../artifacts/index.js";
 import { assertWorkspaceExecutionAllowed, assertWorkspaceRoot } from "../workspaces/index.js";
 import { acquireExecutionAdmission } from "./execution-admission.service.js";
+import { resourceEvent, resourceIds } from "./resource-telemetry.js";
+import { removeManagedContainer } from "./container-cleanup.js";
 import {
   getContainerRunProfile,
   managedContainerLabelArgs,
@@ -84,11 +86,7 @@ function dockerArgs(
  * 调用关系：由 `apps/server/src/modules/execution/process-runner.service.ts:runWhitelistedMake()`、`apps/server/src/modules/execution/qemu-session.service.ts:maybeStopWorkspaceRuntime()`、`apps/server/src/modules/execution/qemu-session.service.ts:stopQemuSession()`、`apps/server/src/modules/execution/sandbox-command.service.ts:onAbort()`、`apps/server/src/modules/execution/sandbox-command.service.ts:runSandboxCommand()` 调用；内部调用 `spawn()`、`on()`。
  */
 function forceRemoveContainer(containerName: string) {
-  const child = spawn("docker", ["rm", "-f", containerName], {
-    shell: false,
-    stdio: "ignore",
-  });
-  child.on("error", () => undefined);
+  void removeManagedContainer(containerName, true);
 }
 
 /**
@@ -119,7 +117,7 @@ export async function runSandboxCommand(args: {
     ),
   );
   const profile = getContainerRunProfile("agent-bash");
-  const lease = await acquireExecutionAdmission({ profiles: [profile] });
+  const lease = await acquireExecutionAdmission({ profiles: [profile], workspaceId: args.metadata?.workspaceId, signal: args.signal });
 
   return new Promise((resolve, reject) => {
     if (args.signal?.aborted) {
@@ -154,7 +152,7 @@ export async function runSandboxCommand(args: {
       clearTimeout(timer);
       args.signal?.removeEventListener("abort", onAbort);
       unregisterManagedContainer(containerName);
-      lease.release();
+      void removeManagedContainer(containerName).then(() => lease.release());
       action();
     };
     /**
@@ -164,6 +162,7 @@ export async function runSandboxCommand(args: {
      * 调用关系：由本模块其他函数、应用编排层、协议适配层或测试按需调用；内部调用 `forceRemoveContainer()`、`kill()`、`finish()`、`reject()`。
      */
     const onAbort = () => {
+      resourceEvent("tool_cancelled", { containerName, ...resourceIds(args.metadata ?? {}) });
       forceRemoveContainer(containerName);
       child.kill("SIGKILL");
       finish(() => reject(new Error("aborted")));
@@ -175,6 +174,7 @@ export async function runSandboxCommand(args: {
     };
     const timer = setTimeout(() => {
       timedOut = true;
+      resourceEvent("tool_timeout", { containerName, timeoutSeconds, ...resourceIds(args.metadata ?? {}) });
       forceRemoveContainer(containerName);
       child.kill("SIGKILL");
     }, timeoutSeconds * 1000);
@@ -197,6 +197,7 @@ export async function runSandboxCommand(args: {
     child.stderr.on("data", forwardData);
     child.on("error", (error) => finish(() => reject(error)));
     child.on("close", (exitCode) => {
+      resourceEvent("tool_exit", { containerName, exitCode, timedOut, resourceLimitReason, ...resourceIds(args.metadata ?? {}) });
       if (timedOut) {
         finish(() => reject(new Error(`timeout:${timeoutSeconds}`)));
         return;

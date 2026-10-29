@@ -320,8 +320,8 @@ Courseworks --> Docker 隔离工作区 --> Bash / 编译工具链 / QEMU / noVNC
 | `homeworks/` | 作业、题库、提交、批改、成绩及逐题批注 |
 | `slideshow/` | PPT 上传、转换、浏览和课件问答 |
 | `management/` | 跨子系统共享的账户、班级、邀请码和归档能力 |
-| `accounts-data/` | Homeworks、Slideshow 使用的共享 SQLite 数据 |
-| `archive-data/` | 删除账户、班级等操作产生的可恢复归档 |
+| `production-data/` | 账户、数据库、上传、学生工作区及可恢复归档，不纳入 Git |
+| `logs/` | 三个子系统的操作、登录和资源日志，不纳入 Git |
 | `docs/` | 集中的运维说明、系统截图和手工测试场景 |
 
 数据目录、课件转换、Courseworks 容器与受限网络的运维细节集中记录在 [docs/operations.md](docs/operations.md)。
@@ -331,15 +331,13 @@ Courseworks --> Docker 隔离工作区 --> Bash / 编译工具链 / QEMU / noVNC
 AES 的完整业务数据不只在一个数据库中。生产备份至少应包含：
 
 - Courseworks MySQL 数据库；
-- `accounts-data/`；
-- `homeworks/uploads/`；
-- `slideshow/uploads/`；
-- `courseworks/student-workspace/`；
-- `archive-data/`；
+- `production-data/` 中的账户、作业、课件、工作区及归档；
 - 生产环境使用的 `courseworks/.env`（应加密保存）；
 - 根目录的 `superuser.toml`（包含明文凭据，必须加密保存）。
 
 恢复时必须保持这些数据来自同一个备份时间点。仅复制代码目录不能恢复账户、邀请码、班级、作业、课件或学生工作区。
+
+目录结构、旧版迁移和日志保留规则见 [数据与运行日志](docs/storage-and-logging.md)。应用数据和备份由 AES 服务账户管理；MySQL 原始文件保留在系统路径中，备份时须另外导出数据库，不能对运行中的实例直接打包原始文件。
 
 ## 浏览器建议
 

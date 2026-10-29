@@ -68,12 +68,12 @@
     {% if aq.type == 'comprehensive' and can_edit and item.answer %}
     <div class="upload-area mt-8">
       <label>上传图片（最多 {{ 5 }} 张，自动转换为 PNG 格式。文件名格式：YYYY-MM-DD-problem{{ aq.question_number }}-{序号}.png）</label>
-      <input type="file" class="file-upload" data-upload-url="{{ url_for('student.upload_file', answer_id=item.answer.id) }}" accept="image/jpeg,image/png,image/webp">
-      <small class="text-muted">已上传 {{ item.files|length }} / 5 张</small>
+      <input type="file" class="file-upload" data-upload-url="{{ url_for('student.upload_file', answer_id=item.answer.id) }}" data-delete-url-template="{{ url_for('student.delete_file', file_id=0) }}" accept="image/jpeg,image/png,image/webp">
+      <small class="text-muted upload-count" aria-live="polite">已上传 {{ item.files|length }} / 5 张</small>
     </div>
     {% endif %}
 
-    {% if aq.type == 'comprehensive' and item.answer and item.files %}
+    {% if aq.type == 'comprehensive' and item.answer %}
     <div class="file-list mt-8">
       {% for f in item.files %}
       <div class="file-item" data-file-id="{{ f.id }}">
@@ -133,6 +133,19 @@
 <script src="{{ url_for('static', filename='vendor/purify.min.js') }}"></script>
 <script>
 const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+let pendingAttachmentRequests = 0;
+
+function updateUploadCount(question) {
+  const count = question.querySelector('.upload-count');
+  if (count) count.textContent = `已上传 ${question.querySelectorAll('.file-item').length} / 5 张`;
+}
+
+document.getElementById('answer-form').addEventListener('submit', event => {
+  if (pendingAttachmentRequests > 0) {
+    event.preventDefault();
+    alert('图片正在上传或删除，请完成后再暂存或提交。');
+  }
+});
 
 document.querySelectorAll('.file-upload').forEach(input => {
   input.addEventListener('change', async function() {
@@ -140,6 +153,8 @@ document.querySelectorAll('.file-upload').forEach(input => {
     if (!file) return;
     const formData = new FormData();
     formData.append('file', file);
+    this.disabled = true;
+    pendingAttachmentRequests += 1;
 
     try {
       const resp = await fetch(this.dataset.uploadUrl, {
@@ -148,32 +163,68 @@ document.querySelectorAll('.file-upload').forEach(input => {
         body: formData,
       });
       const data = await resp.json();
-      if (data.ok) {
-        location.reload();
+      if (resp.ok && data.ok) {
+        const question = this.closest('.question-item');
+        const item = document.createElement('div');
+        item.className = 'file-item';
+        item.dataset.fileId = data.file.id;
+        const link = document.createElement('a');
+        link.href = data.file.url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        const image = document.createElement('img');
+        image.src = data.file.url;
+        image.alt = data.file.name;
+        link.append(image);
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'del-btn';
+        remove.title = '删除';
+        remove.textContent = '\u00d7';
+        remove.dataset.deleteUrl = this.dataset.deleteUrlTemplate.replace('/0/delete', `/${encodeURIComponent(data.file.id)}/delete`);
+        remove.addEventListener('click', () => deleteFile(remove));
+        const name = document.createElement('div');
+        name.className = 'text-muted';
+        name.textContent = data.file.name;
+        item.append(link, remove, name);
+        question.querySelector('.file-list').append(item);
+        updateUploadCount(question);
       } else {
         alert(data.error || '上传失败');
       }
     } catch (e) {
       alert('上传失败：' + e.message);
+    } finally {
+      this.disabled = false;
+      this.value = '';
+      pendingAttachmentRequests -= 1;
     }
   });
 });
 
 async function deleteFile(btn) {
+  if (btn.disabled) return;
   if (!confirm('确认删除该图片？')) return;
+  btn.disabled = true;
+  pendingAttachmentRequests += 1;
   try {
     const resp = await fetch(btn.dataset.deleteUrl, {
       method: 'POST',
       headers: { 'X-CSRF-Token': csrfToken },
     });
     const data = await resp.json();
-    if (data.ok) {
+    if (resp.ok && data.ok) {
+      const question = btn.closest('.question-item');
       btn.closest('.file-item').remove();
+      updateUploadCount(question);
     } else {
       alert(data.error || '删除失败');
     }
   } catch (e) {
     alert('删除失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+    pendingAttachmentRequests -= 1;
   }
 }
 

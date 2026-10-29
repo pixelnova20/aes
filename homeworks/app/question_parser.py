@@ -87,6 +87,21 @@ def _split_stem_options(lines):
     return stem, options
 
 
+def validate_question_numbers(numbers):
+    seen = set()
+    duplicates = set()
+    for number in numbers:
+        if number in seen:
+            duplicates.add(number)
+        seen.add(number)
+    if duplicates:
+        labels = "、".join(str(number) for number in sorted(duplicates))
+        raise ValueError(
+            f"题号重复：{labels}。同一份作业中的题号必须唯一（不同题型之间也不能重复）；"
+            "请修改 Markdown 中的题号后重新上传。"
+        )
+
+
 def parse_markdown(text):
     lines = text.splitlines()
 
@@ -123,6 +138,7 @@ def parse_markdown(text):
             continue
         for num, qlines in _split_questions(body):
             questions.append((qtype, num, qlines))
+    validate_question_numbers(num for _qtype, num, _lines in questions)
     return title, questions
 
 

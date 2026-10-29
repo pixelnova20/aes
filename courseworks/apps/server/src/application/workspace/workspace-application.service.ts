@@ -18,6 +18,7 @@ import { DEFAULT_COURSE_ID } from "../../modules/conversations/index.js";
 import { recordWorkspaceActivityEvent } from "../../modules/evaluation-history/index.js";
 import {
   createWorkspaceShell,
+  openWorkspaceShell,
   getQemuSessionSnapshot,
   getQemuVncStatus,
   getWorkspaceShellLimit,
@@ -460,6 +461,12 @@ export async function getWorkspaceLab(userId: string) {
   };
 }
 
+export async function openWorkspaceLab(userId: string) {
+  const workspace = await getReadyWorkspace(userId);
+  const session = await openWorkspaceShell(workspace.id, workspace.path);
+  return { ...await getWorkspaceLab(userId), session };
+}
+
 export async function getWorkspaceLabVncStatus(userId: string, sessionId: string) {
   const workspace = await getReadyWorkspace(userId);
   if (!workspaceOwnsInteractiveSession(workspace.id, sessionId)) {
@@ -471,7 +478,7 @@ export async function getWorkspaceLabVncStatus(userId: string, sessionId: string
 /** 清理普通 OS Lab 的旧运行态，并为本次页面访问创建唯一的新 Bash。 */
 export async function resetWorkspaceLab(userId: string) {
   const workspace = await getReadyWorkspace(userId);
-  resetWorkspaceLabSessions(workspace.id);
+  await resetWorkspaceLabSessions(workspace.id);
   const session = await createWorkspaceShell(workspace.id, workspace.path);
   return {
     workspace: { id: workspace.id, workspaceUuid: workspace.workspaceUuid },

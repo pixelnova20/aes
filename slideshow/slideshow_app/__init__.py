@@ -1,4 +1,9 @@
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "management"))
+from aes_logging import register_request_logging
 
 from flask import Flask, g, render_template
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -12,6 +17,7 @@ from .database import init_db
 def create_app(config_object=Config):
     app = Flask(__name__)
     app.config.from_object(config_object)
+    register_request_logging(app, "slideshow")
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
     os.makedirs(app.config["UPLOAD_DIR"], exist_ok=True)

@@ -1,6 +1,7 @@
 """Student views: answer, save, submit, upload files, and view grades."""
 import os
 import re
+import tempfile
 from datetime import datetime
 from io import BytesIO
 
@@ -430,31 +431,24 @@ def upload_file(answer_id):
     if ext not in _ALLOWED_EXT:
         return jsonify({"error": "仅支持 JPG、JPEG、PNG、WEBP 格式"}), 400
 
-    # Derive new filename: YYYY-MM-DD-problem{k}-{l}.png
-    today = datetime.now().strftime("%Y-%m-%d")
-    problem_no = aq.question_number
-    # Find the next available l: use max existing l + 1, or 1 if none
-    _L_RE = re.compile(rf"-problem{problem_no}-(\d+)\.png$")
-    max_l = 0
-    for uf in existing_files:
-        m = _L_RE.search(uf.file_path)
-        if m:
-            max_l = max(max_l, int(m.group(1)))
-    l = max_l + 1
-    new_name = f"{today}-problem{problem_no}-{l}.png"
-
     # Destination directory: uploads/<upload_dir>/
     dest_dir = os.path.join(current_app.config["UPLOAD_DIR"], user.upload_dir)
     os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, new_name)
 
-    # Convert to PNG and save
+    # Reserve a unique path: question numbers can repeat, even within one assignment.
+    dest_path = None
     try:
-        img = Image.open(f.stream)
-        img = img.convert("RGB")  # ensure no RGBA palette issues
-        img.save(dest_path, "PNG")
-        file_size = os.path.getsize(dest_path)
+        with Image.open(f.stream) as original:
+            with original.convert("RGB") as img:
+                fd, dest_path = tempfile.mkstemp(
+                    prefix=f"answer-{answer.id}-", suffix=".png", dir=dest_dir
+                )
+                with os.fdopen(fd, "wb") as out:
+                    img.save(out, "PNG")
+                    file_size = out.tell()
     except Exception:
+        if dest_path is not None:
+            os.remove(dest_path)
         return jsonify({"error": "图片处理失败，请确认文件为有效图片"}), 400
 
     if file_size > current_app.config["MAX_ANSWER_FILE_SIZE"]:
@@ -464,13 +458,18 @@ def upload_file(answer_id):
     uf = UploadedFile(
         answer_id=answer.id,
         uploader_id=user.id,
-        file_path=os.path.join(user.upload_dir, new_name),
+        file_path=os.path.join(user.upload_dir, os.path.basename(dest_path)),
         original_name=f.filename,
         mime_type="image/png",
         file_size=file_size,
     )
-    db_session.add(uf)
-    db_session.commit()
+    try:
+        db_session.add(uf)
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        os.remove(dest_path)
+        raise
 
     return jsonify(
         {
@@ -503,15 +502,20 @@ def delete_file(file_id):
     if submission.status not in ("not_started", "saved"):
         return jsonify({"error": "作业已提交，无法删除"}), 400
 
-    # Remove file from disk (file_path is relative to UPLOAD_DIR)
+    # Legacy records may share a path. Commit first and retain referenced files.
+    file_path = uf.file_path
     full_path = os.path.join(
-        current_app.config["UPLOAD_DIR"], uf.file_path
+        current_app.config["UPLOAD_DIR"], file_path
     )
-    if os.path.isfile(full_path):
-        os.remove(full_path)
-
     db_session.delete(uf)
     db_session.commit()
+    if db_session.query(UploadedFile).filter_by(file_path=file_path).first() is None:
+        try:
+            os.remove(full_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            current_app.logger.exception("Failed to remove unreferenced attachment %s", file_id)
     return jsonify({"ok": True})
 
 

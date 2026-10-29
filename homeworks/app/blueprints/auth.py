@@ -1,7 +1,7 @@
 """Authentication bridge from the unified service portal into Homeworks."""
 
 import jwt
-from flask import Blueprint, current_app, redirect, request, session, url_for
+from flask import Blueprint, current_app, g, redirect, request, session, url_for
 
 from ..audit import log
 from ..auth_utils import current_user, login_user, logout_user
@@ -78,6 +78,7 @@ def sso():
         return _portal_redirect()
 
     login_user(user)
+    g.aes_sso_success = True
     session_class_id = None
     class_invite_code = (payload.get("classInviteCode") or "").strip()
     if class_invite_code:

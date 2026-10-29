@@ -55,6 +55,7 @@ def establish_sso_session(token):
         "class_name": class_context["class_name"] if class_context else None,
         "course_name": class_context["course_name"] if class_context else None,
     }
+    g.aes_sso_success = True
 
 
 def login_required(view):

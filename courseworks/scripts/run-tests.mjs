@@ -16,7 +16,7 @@ try {
     ["test"],
     {
       cwd: path.resolve(import.meta.dirname, "../../management"),
-      env: { ...process.env, NODE_ENV: "test" },
+      env: { ...process.env, NODE_ENV: "test", AES_LOG_ROOT: path.join(workspaceRoot, "logs") },
       stdio: "inherit",
     },
   );
@@ -34,6 +34,7 @@ try {
         env: {
           ...process.env,
           NODE_ENV: "test",
+          AES_LOG_ROOT: path.join(workspaceRoot, "logs"),
           DATABASE_URL: "mysql://courseworks_test:courseworks_test@127.0.0.1:3306/courseworks_test",
           JWT_SECRET: "courseworks-test-secret-only",
           WORKSPACE_ROOT: workspaceRoot,

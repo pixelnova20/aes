@@ -6,6 +6,7 @@
 import cors from "cors";
 import express from "express";
 import morgan from "morgan";
+import { requestAudit } from "../infrastructure/logging/audit.js";
 
 import { authRouter } from "../transport/http/routes/auth.router.js";
 import { workspaceRouter } from "../transport/http/routes/workspace.router.js";
@@ -37,6 +38,7 @@ configureAgentConversationHistoryReader(readPiSessionHistory);
  * 调用关系：由 Express 在路由命中时调用；内部委托 application service 或模块公共 API。
  */
 app.use(cors());
+app.use(requestAudit);
 /**
  * 功能：处理 USE <middleware> 请求并把结果转换为 HTTP 响应。
  * 输入：Express request 提供认证信息、路径、查询或请求体；response 用于返回状态码和响应数据。
@@ -57,7 +59,7 @@ app.use(
     const status = Number(tokens.status(req, res) ?? 0);
     const ms = Number(tokens["response-time"](req, res) ?? 0);
     const method = tokens.method(req, res) ?? "-";
-    const url = tokens.url(req, res) ?? "-";
+    const url = (tokens.url(req, res) ?? "-").split("?")[0];
     const email = (req as any).auth?.email ?? "—";
     if (isLogViewerEnabled()) {
       logHttp(email, method, url, status, ms);

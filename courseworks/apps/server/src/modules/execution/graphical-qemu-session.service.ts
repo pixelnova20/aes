@@ -9,6 +9,7 @@ import path from "node:path";
 import { deflateSync } from "node:zlib";
 
 import { config } from "../../config/index.js";
+import { removeManagedContainer } from "./container-cleanup.js";
 import { assertWorkspaceExecutionAllowed, assertWorkspaceRoot, courseworksStateRoot } from "../workspaces/index.js";
 import { tryAcquireExecutionAdmission, type ExecutionAdmissionLease } from "./execution-admission.service.js";
 import { getContainerRunProfile, managedContainerLabelArgs, resourceArgs, securityArgs } from "./container-run-profile.js";
@@ -104,8 +105,7 @@ function appendOutput(session: ActiveGraphicalQemuSession, chunk: Buffer | strin
 }
 
 function forceRemoveContainer(containerName: string) {
-  const child = spawn("docker", ["rm", "-f", containerName], { shell: false, stdio: "ignore" });
-  child.on("error", () => undefined);
+  void removeManagedContainer(containerName, true);
 }
 
 function dockerArgs(containerName: string, workspacePath: string, command: string) {
@@ -258,14 +258,14 @@ export async function startGraphicalQemuSession(args: {
     session.finishedAt = new Date();
     clearTimeout(session.timer);
     unregisterManagedContainer(containerName);
-    session.lease.release();
+    void removeManagedContainer(containerName).then(() => session.lease.release());
   });
   child.on("close", (exitCode, signal) => {
     session.exitCode = exitCode;
     session.finishedAt = new Date();
     clearTimeout(session.timer);
     unregisterManagedContainer(containerName);
-    session.lease.release();
+    void removeManagedContainer(containerName).then(() => session.lease.release());
     if (session.limitReason) return;
     if (session.status === "timeout" || session.status === "error") return;
     if (signal === "SIGKILL") session.status = "stopped";

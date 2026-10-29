@@ -20,7 +20,7 @@ const MAX_TERMINAL_PANE_RATIO = 0.78;
 const LAB_SPLIT_STORAGE_KEY = "courseworks-lab-terminal-pane-ratio";
 const LAB_THEME_STORAGE_KEY = "courseworks-workbench-theme";
 const DEFAULT_MAX_WORKSPACE_SHELLS = 5;
-const LAB_BUILD_REVISION = "2026-09-18-stale-lab-container-v2";
+const LAB_BUILD_REVISION = "2026-10-13-lab-reconnect";
 
 type LabTheme = "light" | "dark";
 
@@ -143,7 +143,8 @@ export function LabPage() {
   const inputTimerRef = useRef<number | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
   const vncRetryTimerRef = useRef<number | null>(null);
-  const workspaceShellStartedRef = useRef(false);
+  const labPresenceRef = useRef<WebSocket | null>(null);
+  const [labConnected, setLabConnected] = useState(false);
   const workspaceLabInitializationRef = useRef<{ token: string; promise: Promise<void> } | null>(null);
   const splitResizeRef = useRef<{ pointerId: number } | null>(null);
   const running = session?.status === "running";
@@ -157,9 +158,57 @@ export function LabPage() {
   }
 
   useEffect(() => {
+    if (!token || runId) return;
+    let disposed = false;
+    let retry: number | undefined;
+    const connect = () => {
+      if (disposed) return;
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${location.host}/api/workspace/lab/presence?token=${encodeURIComponent(token)}`);
+      labPresenceRef.current = socket;
+      socket.addEventListener("message", (event) => {
+        if (labPresenceRef.current !== socket) return;
+        try { if (JSON.parse(String(event.data)).type === "connected") setLabConnected(true); } catch { /* Ignore malformed messages. */ }
+      });
+      socket.addEventListener("close", () => {
+        if (labPresenceRef.current !== socket) return;
+        labPresenceRef.current = null;
+        setLabConnected(false);
+        if (!disposed) retry = window.setTimeout(connect, 750);
+      });
+    };
+    const disconnect = (explicitExit = false) => {
+      disposed = true;
+      window.clearTimeout(retry);
+      const socket = labPresenceRef.current;
+      labPresenceRef.current = null;
+      if (explicitExit && socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "exit" }));
+      }
+      socket?.close();
+    };
+    const hide = () => {
+      // Browser unload covers both tab closure and refresh; do not use this for React effect cleanup.
+      workspaceLabInitializationRef.current = null;
+      setLabConnected(false);
+      disconnect(true);
+    };
+    const show = (event: PageTransitionEvent) => {
+      if (event.persisted) { disposed = false; connect(); }
+    };
+    connect();
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
+    return () => {
+      disconnect();
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
+    };
+  }, [token, runId]);
+
+  useEffect(() => {
     // 页面进入后持续刷新运行态，runId 存在时表示查看某个 Agent Run 的 QEMU。
-    if (!token) return;
-    workspaceShellStartedRef.current = false;
+    if (!token || (!runId && !labConnected)) return;
     const initialization = runId
       ? Promise.all([loadRun(), loadSession()]).then(() => undefined)
       : initializeWorkspaceLab(token);
@@ -169,7 +218,7 @@ export function LabPage() {
       1500,
     );
     return () => window.clearInterval(timer);
-  }, [token, runId]);
+  }, [token, runId, labConnected]);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -525,7 +574,7 @@ export function LabPage() {
     setRun(data.run);
   }
 
-  /** 普通 OS Lab 每次真正进入页面时只复位一次；同一挂载内的 Strict Mode 重放复用该 Promise。 */
+  /** Resume the current Lab; refreshing must not reset Bash or its output. */
   function initializeWorkspaceLab(currentToken: string) {
     const current = workspaceLabInitializationRef.current;
     if (current?.token === currentToken) return current.promise;
@@ -534,19 +583,19 @@ export function LabPage() {
     setActiveShellId(null);
     setSession(null);
     setError(null);
-    const promise = apiFetch<{ session: QemuSession; workspace: { workspaceUuid: string }; limits: { maxShells: number } }>("/workspace/lab/reset", {
+    const promise = apiFetch<{ session: QemuSession; shells: QemuSession[]; workspace: { workspaceUuid: string }; limits: { maxShells: number } }>("/workspace/lab/open", {
       method: "POST",
       token: currentToken,
       headers: { "X-Lab-Client-Revision": LAB_BUILD_REVISION },
     }).then((data) => {
-      workspaceShellStartedRef.current = true;
       setWorkspaceLabel(data.workspace.workspaceUuid.slice(0, 10));
       setMaxWorkspaceShells(data.limits.maxShells);
-      setShells([data.session]);
+      setShells(data.shells);
       setActiveShellId(data.session.runId);
       setSession(data.session);
     }).catch((resetError) => {
-      const message = messageFromError(resetError, "无法重置操作系统实验环境。");
+      workspaceLabInitializationRef.current = null;
+      const message = messageFromError(resetError, "无法打开操作系统实验环境。");
       if (!recoverFromTransientLabError(message)) setError(message);
       throw resetError;
     });
@@ -600,10 +649,6 @@ export function LabPage() {
         } else {
           setActiveShellId(null);
           setSession(null);
-          if (!workspaceShellStartedRef.current) {
-            workspaceShellStartedRef.current = true;
-            void createShell();
-          }
         }
         return;
       }
@@ -622,7 +667,7 @@ export function LabPage() {
    * 调用关系：由 `apps/web/src/features/lab/LabPage.tsx:loadSession()`、`apps/web/src/features/lab/LabPage.tsx:closeShell()`、`apps/web/src/features/lab/LabPage.tsx:LabPage()` 调用；内部调用 `setPending()`、`setError()`、`apiFetch()`、`setShells()`、`setActiveShellId()`、`setSession()`。
    */
   async function createShell() {
-    if (!token || runId) return;
+    if (!token || runId || !labConnected) return;
     setPending("start");
     setError(null);
     try {
@@ -653,7 +698,6 @@ export function LabPage() {
       const next = remaining.find((shell) => shell.status === "running") ?? remaining[0] ?? null;
       setActiveShellId(next?.runId ?? null);
       setSession(next);
-      if (!next) void createShell();
     }
   }
 
@@ -795,7 +839,11 @@ export function LabPage() {
     <div className={`lab-shell ${labTheme}`}>
       <header className="lab-header">
         <div className="lab-header-left">
-          <button className="lab-back" title="返回工作区" aria-label="返回工作区" onClick={() => navigate("/app")}>←</button>
+          <button className="lab-back" title="返回工作区" aria-label="返回工作区" onClick={() => {
+            const socket = labPresenceRef.current;
+            if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "exit" }));
+            navigate("/app");
+          }}>←</button>
           <div className="lab-app-menu-wrap" onPointerDown={(event) => event.stopPropagation()}>
             <button className={`lab-brand ${appMenuOpen ? "open" : ""}`} onClick={() => setAppMenuOpen((open) => !open)} aria-expanded={appMenuOpen}>
               <span className="lab-logo">OS</span>

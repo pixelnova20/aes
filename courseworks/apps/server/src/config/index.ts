@@ -8,27 +8,21 @@ import { fileURLToPath } from "node:url";
 
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
+import { aesRoot, productionDataRoot } from "@aes/management";
 
 import { findSuperuserConfig, loadSuperuserConfig } from "./superuser-config.js";
 
-const repositoryEnvPath = fileURLToPath(new URL("../../../../.env", import.meta.url));
-const defaultHomeworksAccountDatabasePath = fileURLToPath(
-  new URL("../../../../../accounts-data/accounts.db", import.meta.url),
-);
-const defaultHomeworksCourseDatabasePath = fileURLToPath(
-  new URL("../../../../../accounts-data/courses.db", import.meta.url),
-);
-const defaultHomeworksUploadPath = fileURLToPath(
-  new URL("../../../../../homeworks/uploads", import.meta.url),
-);
-const defaultSlideshowDatabasePath = fileURLToPath(
-  new URL("../../../../../accounts-data/slideshow.db", import.meta.url),
-);
-const defaultArchiveRoot = path.resolve(process.cwd(), "../archive-data");
+const repositoryEnvPath = path.join(aesRoot(), "courseworks/.env");
 const configuredEnvPath = process.env.COURSEWORKS_ENV_FILE;
 loadEnv({
   path: configuredEnvPath ? path.resolve(process.cwd(), configuredEnvPath) : repositoryEnvPath,
 });
+const dataRoot = productionDataRoot();
+const defaultHomeworksAccountDatabasePath = path.join(dataRoot, "accounts/accounts.db");
+const defaultHomeworksCourseDatabasePath = path.join(dataRoot, "homeworks/courses.db");
+const defaultHomeworksUploadPath = path.join(dataRoot, "homeworks/uploads");
+const defaultSlideshowDatabasePath = path.join(dataRoot, "slideshow/slideshow.db");
+const defaultArchiveRoot = path.join(dataRoot, "archives");
 
 // 配置集中在这里做一次解析和校验，其他模块只消费最终 config，
 // 不再直接读取 process.env，避免隐式配置分散在代码各处。
@@ -51,7 +45,7 @@ const configSchema = z.object({
   ARCHIVE_ROOT: z.string().min(1).default(defaultArchiveRoot),
   BACKEND_HOST: z.string().default("127.0.0.1"),
   BACKEND_PORT: z.coerce.number().int().positive().default(3000),
-  WORKSPACE_ROOT: z.string().min(1),
+  WORKSPACE_ROOT: z.string().min(1).default(path.join(dataRoot, "courseworks/workspaces")),
   DOCKER_TOOLBOX_IMAGE: z.string().min(1).default(legacyRunnerImage ?? "courseworks-toolbox:latest"),
   DOCKER_RESTRICTED_NETWORK: z.string().min(1).default("courseworks-restricted"),
   DOCKER_RUNNER_CPUS: z.coerce.number().positive().default(Number(legacyRunnerCpus ?? "1")),
@@ -96,6 +90,9 @@ const configSchema = z.object({
   WORKSPACE_AGENT_RUN_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(
     Number.parseInt(workspaceAgentRunTimeoutMs ?? "0", 10) || 0
   ),
+  AGENT_RUN_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(600000),
+  AGENT_RUN_REPEAT_LIMIT: z.coerce.number().int().min(4).default(12),
+  AGENT_LENGTH_RECOVERY_MAX_ATTEMPTS: z.coerce.number().int().min(0).max(5).default(2),
   DEFAULT_AI_TEMPERATURE: z.coerce.number().default(0.7),
   WEB_SEARCH_PROVIDER: z.enum(["disabled", "brave", "bing", "duckduckgo"]).default("bing"),
   WEB_SEARCH_API_KEY: z.string().optional(),

@@ -10,6 +10,7 @@ export { summarizeQemuOutput } from "./qemu-output.js";
 export {
   cleanupStaleWorkspaceRuntimes,
   createWorkspaceShell,
+  openWorkspaceShell,
   getQemuSessionSnapshot,
   getQemuVncStatus,
   getWorkspaceShellLimit,
@@ -35,6 +36,9 @@ export { resetWorkspaceAgentRuntime } from "./workspace-runtime-runner.service.j
 export { attachVncBridge } from "./vnc-bridge.service.js";
 export { attachTerminalBridge } from "./terminal-bridge.service.js";
 export { startContainerResourceMonitor, stopContainerResourceMonitor } from "./container-resource-monitor.service.js";
+export { resourceEvent } from "./resource-telemetry.js";
+export { executionAdmissionSnapshot } from "./execution-admission.service.js";
+export { managedContainerSnapshot } from "./container-resource-monitor.service.js";
 export {
   captureGraphicalQemuDisplay,
   getGraphicalQemuSession,

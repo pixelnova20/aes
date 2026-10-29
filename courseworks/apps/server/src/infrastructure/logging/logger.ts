@@ -11,6 +11,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { logRoot } from "@aes/management";
 
 const MAX_BUFFER_LINES = 50000;
 const ringBuffer: string[] = [];
@@ -36,7 +37,7 @@ export function isLogViewerEnabled() {
  */
 export function initLogFile(workspaceRoot: string) {
   if (!isLogViewerEnabled()) return;
-  logFile = path.join(workspaceRoot, "..", "logs", "debug.log");
+  logFile = path.join(logRoot(), "courseworks", "debug.log");
   const dir = path.dirname(logFile);
   fs.mkdirSync(dir, { recursive: true });
   writeStream = fs.createWriteStream(logFile, { flags: "a" });

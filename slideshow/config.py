@@ -3,8 +3,9 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
+DATA_ROOT = os.environ.get("AES_DATA_ROOT", os.path.join(PROJECT_ROOT, "production-data"))
 ACCOUNTS_DIR = os.environ.get(
-    "ACCOUNTS_DIR", os.path.join(PROJECT_ROOT, "accounts-data")
+    "ACCOUNTS_DIR", os.path.join(DATA_ROOT, "accounts")
 )
 
 
@@ -18,16 +19,16 @@ class Config:
     APPLICATION_ROOT = os.environ.get("APPLICATION_ROOT", "/slideshow")
 
     DATABASE = os.environ.get(
-        "SLIDESHOW_DATABASE_PATH", os.path.join(ACCOUNTS_DIR, "slideshow.db")
+        "SLIDESHOW_DATABASE_PATH", os.path.join(DATA_ROOT, "slideshow", "slideshow.db")
     )
     ACCOUNT_DATABASE = os.environ.get(
         "HOMEWORKS_ACCOUNT_DATABASE_PATH", os.path.join(ACCOUNTS_DIR, "accounts.db")
     )
     COURSE_DATABASE = os.environ.get(
-        "HOMEWORKS_COURSE_DATABASE_PATH", os.path.join(ACCOUNTS_DIR, "courses.db")
+        "HOMEWORKS_COURSE_DATABASE_PATH", os.path.join(DATA_ROOT, "homeworks", "courses.db")
     )
     UPLOAD_DIR = os.environ.get(
-        "SLIDESHOW_UPLOAD_PATH", os.path.join(BASE_DIR, "uploads")
+        "SLIDESHOW_UPLOAD_PATH", os.path.join(DATA_ROOT, "slideshow", "uploads")
     )
 
     COURSEWORKS_INTERNAL_API_URL = os.environ.get(

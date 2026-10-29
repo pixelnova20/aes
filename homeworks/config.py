@@ -1,7 +1,6 @@
 """Application configuration.
 
-Database paths default to the shared sibling ``accounts-data`` directory;
-uploads and the source question bank stay under the Homeworks project root.
+Runtime databases and uploads default to the AES production-data directory.
 Values may be overridden via environment variables.
 """
 import os
@@ -12,8 +11,9 @@ except ModuleNotFoundError:  # Python 3.10 compatibility
     import tomli as tomllib
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.environ.get("AES_DATA_ROOT", os.path.join(os.path.dirname(BASE_DIR), "production-data"))
 ACCOUNTS_DIR = os.environ.get(
-    "ACCOUNTS_DIR", os.path.join(os.path.dirname(BASE_DIR), "accounts-data")
+    "ACCOUNTS_DIR", os.path.join(DATA_ROOT, "accounts")
 )
 SUPERUSER_CONFIG_PATH = os.environ.get(
     "SUPERUSER_CONFIG_PATH", os.path.join(os.path.dirname(BASE_DIR), "superuser.toml")
@@ -54,12 +54,12 @@ class Config:
         "HOMEWORKS_ACCOUNT_DATABASE_PATH", os.path.join(ACCOUNTS_DIR, "accounts.db")
     )
     COURSE_DATABASE = os.environ.get(
-        "HOMEWORKS_COURSE_DATABASE_PATH", os.path.join(ACCOUNTS_DIR, "courses.db")
+        "HOMEWORKS_COURSE_DATABASE_PATH", os.path.join(DATA_ROOT, "homeworks", "courses.db")
     )
     DATABASE = COURSE_DATABASE
 
     # Uploaded files (chapter markdown + student photos).
-    UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
+    UPLOAD_DIR = os.environ.get("HOMEWORKS_UPLOAD_PATH", os.environ.get("UPLOAD_DIR", os.path.join(DATA_ROOT, "homeworks", "uploads")))
     CHAPTER_UPLOAD_DIR = os.path.join(UPLOAD_DIR, "chapters")
     ANSWER_UPLOAD_DIR = os.path.join(UPLOAD_DIR, "answers")
 

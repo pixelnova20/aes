@@ -6,6 +6,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import net from "node:net";
+import { LabPresence } from "./lab-presence.js";
+import { resourceEvent } from "./resource-telemetry.js";
+import { removeManagedContainer, isContainerRemovalPending } from "./container-cleanup.js";
 import path from "node:path";
 
 import { config } from "../../config/index.js";
@@ -65,6 +68,25 @@ type WorkspaceRuntime = {
   lease: ExecutionAdmissionLease;
 };
 const workspaceRuntimes = new Map<string, WorkspaceRuntime>();
+export const workspaceLabPresence = new LabPresence((workspaceId) => {
+  // Agent Run QEMU and tool containers have their own lifetime; only close Lab Bash sessions.
+  for (const session of sessions.values()) {
+    if (session.workspaceId === workspaceId && session.kind === "shell" && session.status === "running") {
+      stopQemuSession(session.runId);
+    }
+  }
+});
+const openingShells = new Map<string, Promise<QemuSessionSnapshot>>();
+
+export function openWorkspaceShell(workspaceId: string, workspacePath: string) {
+  const pending = openingShells.get(workspaceId);
+  if (pending) return pending;
+  const existing = listWorkspaceShells(workspaceId)[0];
+  if (existing) return Promise.resolve(existing);
+  const promise = createWorkspaceShell(workspaceId, workspacePath).finally(() => openingShells.delete(workspaceId));
+  openingShells.set(workspaceId, promise);
+  return promise;
+}
 
 /**
  * 功能：处理`cleanup` `stale` 工作区 `runtimes`。
@@ -73,11 +95,14 @@ const workspaceRuntimes = new Map<string, WorkspaceRuntime>();
  * 调用关系：由 `apps/server/src/app/server.ts 顶层流程` 调用；内部调用 `spawnSync()`、`split()`、`spawn()`。
  */
 export function cleanupStaleWorkspaceRuntimes() {
-  const listed = spawnSync("docker", ["ps", "-aq", "--filter", "label=courseworks.managed=true"], { encoding: "utf8" });
+  const listed = spawnSync("docker", ["ps", "-aq", "--filter", "label=courseworks.managed=true"], { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL" });
+  if (listed.status !== 0) throw new Error("Unable to reconcile managed containers before startup.");
   const containerIds = listed.stdout.split(/\s+/).filter(Boolean);
   if (containerIds.length) {
-    spawn("docker", ["rm", "-f", ...containerIds], { shell: false, stdio: "ignore" });
+    const removed = spawnSync("docker", ["rm", "-f", ...containerIds], { shell: false, stdio: "ignore", timeout: 30000, killSignal: "SIGKILL" });
+    if (removed.status !== 0) throw new Error("Unable to remove stale managed containers before startup.");
   }
+  resourceEvent("startup_reconciled", { removedContainers: containerIds.length });
 }
 
 /**
@@ -114,9 +139,9 @@ function ensureWorkspaceRuntime(workspaceId: string, workspacePath: string) {
     "-e", "XDG_STATE_HOME=/tmp/runner/.local/state",
     config.DOCKER_TOOLBOX_IMAGE,
     "sleep", "infinity"
-  ], { encoding: "utf8" });
+  ], { encoding: "utf8", timeout: 15000, killSignal: "SIGKILL" });
   if (result.status !== 0) {
-    lease.release();
+    void removeManagedContainer(containerName, true).then(() => lease.release());
     throw new Error(result.stderr.trim() || "Unable to start workspace runtime.");
   }
 
@@ -127,13 +152,13 @@ function ensureWorkspaceRuntime(workspaceId: string, workspacePath: string) {
     profile,
     metadata: { workspaceId, workspacePath },
     onLimit: (reason) => {
-      forceRemoveContainer(containerName);
-      lease.release();
+      void removeManagedContainer(containerName).then(() => lease.release());
       for (const session of sessions.values()) {
         if (session.workspaceId !== workspaceId || session.status !== "running") continue;
         session.limitReason = reason;
         session.status = reason === "idle_timeout" ? "idle_timeout" : "resource_limit_exceeded";
         appendOutput(session, `\n${resourceLimitMessage(reason)}\n`);
+        forceRemoveContainer(session.containerName);
         session.child.kill("SIGKILL");
       }
       workspaceRuntimes.delete(workspaceId);
@@ -203,8 +228,7 @@ function dockerArgs(
  * 调用关系：由 `apps/server/src/modules/execution/process-runner.service.ts:runWhitelistedMake()`、`apps/server/src/modules/execution/qemu-session.service.ts:maybeStopWorkspaceRuntime()`、`apps/server/src/modules/execution/qemu-session.service.ts:stopQemuSession()`、`apps/server/src/modules/execution/sandbox-command.service.ts:onAbort()`、`apps/server/src/modules/execution/sandbox-command.service.ts:runSandboxCommand()` 调用；内部调用 `spawn()`、`on()`。
  */
 function forceRemoveContainer(containerName: string) {
-  const child = spawn("docker", ["rm", "-f", containerName], { shell: false, stdio: "ignore" });
-  child.on("error", () => undefined);
+  void removeManagedContainer(containerName, true);
 }
 
 /**
@@ -345,14 +369,13 @@ Detected placeholder Makefile target instead of a real QEMU run pipeline.`.trim(
  */
 function maybeStopWorkspaceRuntime(workspaceId: string) {
   const hasRunningShell = [...sessions.values()].some(
-    (session) => session.workspaceId === workspaceId && session.kind === "shell" && session.status === "running"
+    (session) => session.workspaceId === workspaceId && session.kind === "shell" && (session.status === "running" || isContainerRemovalPending(session.containerName))
   );
   if (hasRunningShell) return;
   const runtime = workspaceRuntimes.get(workspaceId);
   if (!runtime) return;
-  forceRemoveContainer(runtime.containerName);
   unregisterManagedContainer(runtime.containerName);
-  runtime.lease.release();
+  void removeManagedContainer(runtime.containerName).then(() => runtime.lease.release());
   workspaceRuntimes.delete(workspaceId);
 }
 
@@ -509,6 +532,7 @@ async function startInteractiveSession(
   };
 
   sessions.set(runId, session);
+  if (kind === "shell") workspaceLabPresence.track(workspaceId);
   if (!runtime) discoverVncPort(session);
   registerManagedContainer({
     containerName,
@@ -533,13 +557,18 @@ async function startInteractiveSession(
     session.finishedAt = new Date();
     session.updatedAt = session.finishedAt;
     unregisterManagedContainer(containerName);
-    session.lease.release();
+    void removeManagedContainer(containerName).then(() => {
+      session.lease.release();
+      maybeStopWorkspaceRuntime(session.workspaceId);
+    });
   });
   child.on("close", (code, signal) => {
     finalizeStatus(session, code, signal);
     unregisterManagedContainer(containerName);
-    session.lease.release();
-    maybeStopWorkspaceRuntime(session.workspaceId);
+    void removeManagedContainer(containerName).then(() => {
+      session.lease.release();
+      maybeStopWorkspaceRuntime(session.workspaceId);
+    });
   });
 
   return toSnapshot(session, runId);
@@ -621,13 +650,16 @@ export function listWorkspaceShells(workspaceId: string) {
 
 /** 终止并忘记普通 OS Lab 中属于指定工作区的全部运行态，不影响工作区文件。 */
 export function resetWorkspaceLabSessions(workspaceId: string) {
+  const removals: Promise<void>[] = [];
   for (const [sessionId, session] of sessions) {
     if (session.workspaceId !== workspaceId) continue;
     sessions.delete(sessionId);
-    if (session.status !== "running") continue;
-    forceRemoveContainer(session.containerName);
+    if (session.status !== "running") {
+      if (isContainerRemovalPending(session.containerName)) removals.push(removeManagedContainer(session.containerName).then(() => session.lease.release()));
+      continue;
+    }
     unregisterManagedContainer(session.containerName);
-    session.lease.release();
+    removals.push(removeManagedContainer(session.containerName, true).then(() => session.lease.release()));
     session.child.stdin?.end();
     session.child.kill("SIGKILL");
   }
@@ -635,10 +667,10 @@ export function resetWorkspaceLabSessions(workspaceId: string) {
   const runtime = workspaceRuntimes.get(workspaceId);
   if (runtime) {
     workspaceRuntimes.delete(workspaceId);
-    forceRemoveContainer(runtime.containerName);
     unregisterManagedContainer(runtime.containerName);
-    runtime.lease.release();
+    removals.push(removeManagedContainer(runtime.containerName).then(() => runtime.lease.release()));
   }
+  return Promise.all(removals).then(() => undefined);
 }
 
 export function getWorkspaceShellLimit() {
@@ -744,7 +776,11 @@ export function stopQemuSession(runId: string) {
   }
 
   if (session.status === "running") {
+    session.status = "stopped";
+    session.finishedAt = new Date();
+    session.updatedAt = session.finishedAt;
     appendOutput(session, `\n[interactive session stop requested]\n`);
+    publishSessionEvent(runId, { type: "status", session: toSnapshot(session, runId) });
     forceRemoveContainer(session.containerName);
     session.child.stdin?.end();
     session.child.kill("SIGKILL");

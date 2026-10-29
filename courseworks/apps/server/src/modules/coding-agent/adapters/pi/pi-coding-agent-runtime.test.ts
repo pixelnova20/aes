@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import test from "node:test";
+import { config } from "../../../../config/index.js";
 
 import type { AgentRunStatus } from "@prisma/client";
 
@@ -34,6 +35,84 @@ type CapturedRequest = {
   thinking?: { type?: string };
   reasoning_effort?: string;
 };
+
+test("streaming model keeps running beyond one response timeout interval", async (context) => {
+  const server=http.createServer((req,res)=>{
+    req.resume();req.on("end",()=>{
+      res.writeHead(200,{"Content-Type":"text/event-stream"});
+      let n=0;
+      const send=()=>res.write(`data: ${JSON.stringify({id:"slow",object:"chat.completion.chunk",model:"mock-model",choices:[{index:0,delta:{role:"assistant",content:"progress "},finish_reason:null}]})}\n\n`);
+      send();
+      const timer=setInterval(()=>{
+        send();
+        if(++n===12){clearInterval(timer);res.write(`data: ${JSON.stringify({id:"slow",object:"chat.completion.chunk",model:"mock-model",choices:[{index:0,delta:{},finish_reason:"stop"}]})}\n\n`);res.end("data: [DONE]\n\n");}
+      },75);
+      res.on("close",()=>clearInterval(timer));
+    });
+  });
+  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  context.after(()=>{server.closeAllConnections();server.close();});
+  const address=server.address();assert.ok(address&&typeof address==="object");
+  const workspacePath=path.join(process.env.WORKSPACE_ROOT!,"progress-stream");await fs.mkdir(workspacePath,{recursive:true});
+  const now=new Date().toISOString();const store=new FakeAgentRunStore();const runtime=new PiCodingAgentRuntime(store,400);
+  await runtime.run({runId:"progress-stream",userId:"test",workspacePath,cwd:workspacePath,prompt:"test",aiSettings:{apiKey:"test",baseUrl:`http://127.0.0.1:${address.port}/v1`,model:"mock-model",contextWindowTokens:16384},chatSession:{sessionId:"77777777-7777-4777-8777-777777777777",sessionKey:"progress-test",title:"test",createdAt:now,updatedAt:now,turnCount:0,status:"active"}});
+  assert.equal(store.failed.length,0);assert.equal(store.completed.length,1);
+});
+
+test("repeated read loop stops, retains history, and releases the active session", async (context) => {
+  const previous=config.AGENT_RUN_REPEAT_LIMIT;config.AGENT_RUN_REPEAT_LIMIT=4;
+  let calls=0;
+  const server=http.createServer((req,res)=>{req.resume();req.on("end",()=>{
+    res.writeHead(200,{"Content-Type":"text/event-stream"});
+    res.write(`data: ${JSON.stringify({id:"loop",object:"chat.completion.chunk",model:"mock-model",choices:[{index:0,delta:{role:"assistant",tool_calls:[{index:0,id:`read-${++calls}`,type:"function",function:{name:"read",arguments:JSON.stringify({path:"unchanged.txt"})}}]},finish_reason:null}]})}\n\n`);
+    res.write(`data: ${JSON.stringify({id:"loop",object:"chat.completion.chunk",model:"mock-model",choices:[{index:0,delta:{},finish_reason:"tool_calls"}]})}\n\n`);res.end("data: [DONE]\n\n");
+  });});
+  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  context.after(()=>{config.AGENT_RUN_REPEAT_LIMIT=previous;server.closeAllConnections();server.close();});
+  const address=server.address();assert.ok(address&&typeof address==="object");
+  const workspacePath=path.join(process.env.WORKSPACE_ROOT!,"progress-loop");await fs.mkdir(workspacePath,{recursive:true});await fs.writeFile(path.join(workspacePath,"unchanged.txt"),"same content\n");
+  const now=new Date().toISOString();const store=new FakeAgentRunStore();const runtime=new PiCodingAgentRuntime(store,2000);const sessionId="66666666-6666-4666-8666-666666666666";
+  await assert.rejects(runtime.run({runId:"progress-loop",userId:"test",workspacePath,cwd:workspacePath,prompt:"test",aiSettings:{apiKey:"test",baseUrl:`http://127.0.0.1:${address.port}/v1`,model:"mock-model",contextWindowTokens:16384},chatSession:{sessionId,sessionKey:"loop-test",title:"test",createdAt:now,updatedAt:now,turnCount:0,status:"active"}}),/疑似循环/);
+  assert.equal(store.failed.length,1);assert.equal(store.completed.length,0);assert.equal(runtime.getContextUsage(sessionId),undefined);
+  assert.ok(store.traces.some(t=>t.trace.stepName==="pi:progress_warning"));
+  assert.match(store.responses.at(-1)!.markdown,/会话和代码已保留/);
+  assert.equal(await fs.readFile(path.join(workspacePath,"unchanged.txt"),"utf8"),"same content\n");
+  assert.ok(calls<=6);
+});
+
+test("whole-run deadline aborts a stalled provider and releases the session", async (context) => {
+  const previous = config.WORKSPACE_AGENT_RUN_TIMEOUT_MS;
+  config.WORKSPACE_AGENT_RUN_TIMEOUT_MS = 150;
+  const provider = await startStalledProvider();
+  context.after(() => {
+    config.WORKSPACE_AGENT_RUN_TIMEOUT_MS = previous;
+    provider.server.closeAllConnections();
+    provider.server.close();
+  });
+  const workspacePath = path.join(process.env.WORKSPACE_ROOT!, "whole-run-deadline", "workspace");
+  await fs.mkdir(workspacePath, { recursive: true });
+  const now = new Date().toISOString();
+  const store = new FakeAgentRunStore();
+  const runtime = new PiCodingAgentRuntime(store, 10000);
+  await assert.rejects(runtime.run({
+    runId: "run-deadline", userId: "user-test", workspacePath, cwd: workspacePath, prompt: "test",
+    aiSettings: { apiKey: "test-key", baseUrl: provider.baseUrl, model: "mock-model", contextWindowTokens: 16384 },
+    chatSession: { sessionId: "88888888-8888-4888-8888-888888888888", sessionKey: "course:test:deadline", title: "Deadline", createdAt: now, updatedAt: now, turnCount: 0, status: "active" },
+  }), /deadline/);
+  assert.equal(store.failed.length, 1);
+  assert.equal(store.completed.length, 0);
+  assert.equal(runtime.getContextUsage("88888888-8888-4888-8888-888888888888"), undefined);
+});
+
+test("idle run stops without an absolute deadline and releases its session", async (context) => {
+  const previous=config.AGENT_RUN_IDLE_TIMEOUT_MS;config.AGENT_RUN_IDLE_TIMEOUT_MS=150;
+  const provider=await startStalledProvider();
+  context.after(()=>{config.AGENT_RUN_IDLE_TIMEOUT_MS=previous;provider.server.closeAllConnections();provider.server.close();});
+  const workspacePath=path.join(process.env.WORKSPACE_ROOT!,"progress-idle");await fs.mkdir(workspacePath,{recursive:true});
+  const now=new Date().toISOString();const store=new FakeAgentRunStore();const runtime=new PiCodingAgentRuntime(store,10000);const sessionId="55555555-5555-4555-8555-555555555555";
+  await assert.rejects(runtime.run({runId:"progress-idle",userId:"test",workspacePath,cwd:workspacePath,prompt:"test",aiSettings:{apiKey:"test",baseUrl:provider.baseUrl,model:"mock-model",contextWindowTokens:16384},chatSession:{sessionId,sessionKey:"idle-test",title:"test",createdAt:now,updatedAt:now,turnCount:0,status:"active"}}),/idle_timeout:/);
+  assert.equal(store.failed.length,1);assert.equal(runtime.getContextUsage(sessionId),undefined);
+});
 
 test("Pi runtime identity prompt exposes selected model metadata without secrets", () => {
   const prompt = buildRuntimeAiIdentityPrompt({
@@ -1046,7 +1125,7 @@ test("Pi runtime aborts and fails a stalled model request", async (context) => {
       turnCount: 0,
       status: "active",
     },
-  }), /模型单次响应超过 1 秒/);
+  }), /模型连续 1 秒没有新输出/);
 
   assert.equal(store.completed.length, 0);
   assert.equal(store.failed.length, 1);
@@ -1060,6 +1139,9 @@ test("Pi runtime aborts and fails a stalled model request", async (context) => {
  * 调用关系：由 Node test runner 在执行当前测试文件时调用。
  */
 test("Pi runtime marks a length-limited response as failed", async (context) => {
+  const previous = config.AGENT_LENGTH_RECOVERY_MAX_ATTEMPTS;
+  config.AGENT_LENGTH_RECOVERY_MAX_ATTEMPTS = 0;
+  context.after(() => { config.AGENT_LENGTH_RECOVERY_MAX_ATTEMPTS = previous; });
   const provider = await startSingleResponseProvider({ finishReason: "length" });
   context.after(() => provider.server.close());
   const workspacePath = path.join(process.env.WORKSPACE_ROOT!, "pi-runtime-length", "workspace");
@@ -1092,13 +1174,78 @@ test("Pi runtime marks a length-limited response as failed", async (context) => 
         status: "active",
       },
     }),
-    /自动预算上限/,
+    /单次模型输出达到 Token 上限/,
   );
 
   assert.equal(store.completed.length, 0);
   assert.equal(store.failed.length, 1);
-  assert.match(store.failed[0].message, /自动预算上限/);
+  assert.match(store.failed[0].message, /单次模型输出达到 Token 上限/);
 });
+
+for (const scenario of ["automatic", "manual", "thinking-only", "repeated", "quota", "cancel", "slow-summary", "summary-failure"] as const) {
+  test(`length recovery: ${scenario}`, async context => {
+    const previousIdle = config.AGENT_RUN_IDLE_TIMEOUT_MS;
+    if (scenario === "slow-summary") config.AGENT_RUN_IDLE_TIMEOUT_MS = 500;
+    const requests: CapturedRequest[] = [];
+    let runtime: PiCodingAgentRuntime;
+    let summaryCalls = 0;
+    const server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString()); requests.push(body);
+        const isSummary = JSON.stringify(body.messages?.[0]).includes("You are a context summarization assistant");
+        if (isSummary) summaryCalls++;
+        if (scenario === "summary-failure" && isSummary) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({error:{message:"Summary rejected",type:"invalid_request_error"}}));
+          return;
+        }
+        const length = !isSummary && (requests.length === 1 || scenario === "repeated");
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        const emit = (delta: object, finish: string | null = null) => res.write(`data: ${JSON.stringify({id:"recovery",object:"chat.completion.chunk",model:"mock-model",choices:[{index:0,delta,finish_reason:finish}],...(finish?{usage:{prompt_tokens: length && scenario !== "manual" ? 13000 : 100, completion_tokens:length ? 2000 : 20,total_tokens:length && scenario !== "manual" ? 15000 : 120}}:{})})}\n\n`);
+        const finish = () => { emit({}, length?"length":"stop"); res.end("data: [DONE]\n\n"); };
+        if (scenario === "cancel" && isSummary) { void runtime.abort("recover-cancel"); res.end(); return; }
+        const content = isSummary ? "Original task: finish the exercise. Existing files must be preserved. Next step: provide final answer." : length ? "Partial answer with unfinished analysis. ".repeat(3000) : "Recovered final answer";
+        emit({role:"assistant",...(scenario === "thinking-only" && length ? {reasoning_content:content} : {content})});
+        if (scenario === "slow-summary" && isSummary) {
+          let n=0;const timer=setInterval(()=>{emit({content:" summary progress"});if(++n===12){clearInterval(timer);finish();}},75);
+          res.on("close",()=>clearInterval(timer));
+        } else finish();
+      });
+    });
+    await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+    context.after(()=>{config.AGENT_RUN_IDLE_TIMEOUT_MS=previousIdle;server.closeAllConnections();server.close();});
+    const address=server.address();assert.ok(address&&typeof address==="object");
+    const workspacePath=path.join(process.env.WORKSPACE_ROOT!,"recover-"+scenario,"project");await fs.mkdir(workspacePath,{recursive:true});await fs.writeFile(path.join(workspacePath,"existing.txt"),"preserve me");
+    const now=new Date().toISOString();const store=new FakeAgentRunStore();runtime=new PiCodingAgentRuntime(store,scenario==="slow-summary"?400:5000);
+    let usageCalls=0;
+    const input={runId:"recover-"+scenario,userId:"test",workspacePath,cwd:workspacePath,prompt:"Finish the exercise without overwriting existing files",aiSettings:{apiKey:"test",baseUrl:`http://127.0.0.1:${address.port}/v1`,model:"mock-model",contextWindowTokens:16384},chatSession:{sessionId:"44444444-4444-4444-8444-444444444444",sessionKey:"recover-test",title:"test",createdAt:now,updatedAt:now,turnCount:0,status:"active" as const},onTokenUsage:async()=>{usageCalls++;return scenario==="quota"&&usageCalls>=2;}};
+    if (scenario === "summary-failure") {
+      await assert.rejects(runtime.run(input),/压缩/);
+      assert.equal(store.completed.length,0);
+      assert.ok(!requests.some(request=>JSON.stringify(request.messages).includes("AES automatic continuation")));
+    } else if (scenario === "repeated") {
+      await assert.rejects(runtime.run(input),/自动恢复 2 次后仍未完成/);
+      assert.equal(store.completed.length,0);
+      // Compaction can summarize several segments; bound task turns, not summary calls.
+      assert.equal(requests.length - summaryCalls, 3);
+      assert.equal(store.traces.filter(t => t.trace.stepName === "pi:length_recovery").length, 2);
+    } else if (scenario === "quota") {
+      await assert.rejects(runtime.run(input),/配额已用完/);assert.equal(requests.length,2);assert.equal(store.completed.length,0);
+    } else if (scenario === "cancel") {
+      await assert.rejects(runtime.run(input));assert.equal(requests.length,2);assert.equal(store.completed.length,0);
+    } else {
+      assert.equal(await runtime.run(input),"Recovered final answer");assert.equal(store.failed.length,0);assert.equal(store.completed.length,1);
+      assert.equal(requests.length,3);assert.equal(summaryCalls,1);
+      assert.match(JSON.stringify(requests[2].messages),/AES automatic continuation/);
+      assert.ok(store.traces.some(t=>t.trace.stepName==="pi:length_recovery"));
+      assert.ok(usageCalls>=3,"initial response, compaction and continuation usage counted");
+    }
+    assert.equal(runtime.getContextUsage(input.chatSession.sessionId),undefined);
+    assert.equal(await fs.readFile(path.join(workspacePath,"existing.txt"),"utf8"),"preserve me");
+  });
+}
 
 /**
  * 功能：验证当前 test/describe 声明对应的行为场景。

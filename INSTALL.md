@@ -252,11 +252,11 @@ http://SERVER_IP:10001/
 | --- | --- |
 | `~/aes/superuser.toml` | 超级用户邮箱、明文密码和全局资源上限 |
 | `~/aes/courseworks/.env` | 数据库、会话密钥、资源和网络配置 |
-| `~/aes/accounts-data/` | Homeworks、Slideshow 的 SQLite 数据 |
-| `~/aes/homeworks/uploads/` | 题库和学生附件 |
-| `~/aes/slideshow/uploads/` | 原始 PPT 和转换结果 |
-| `~/aes/courseworks/student-workspace/` | Courseworks 持久化工作区 |
-| `~/aes/archive-data/` | 删除操作产生的归档 |
+| `~/aes/production-data/accounts/` | Homeworks、Slideshow 的 SQLite 数据 |
+| `~/aes/production-data/homeworks/uploads/` | 题库和学生附件 |
+| `~/aes/production-data/slideshow/uploads/` | 原始 PPT 和转换结果 |
+| `~/aes/production-data/courseworks/workspaces/` | Courseworks 持久化工作区 |
+| `~/aes/production-data/archives/` | 删除操作产生的归档 |
 | `/var/lib/aes/home/` | 服务运行时使用的独立 HOME 和缓存目录 |
 | `/var/lib/aes/www/` | 供 Nginx 读取的前端静态文件副本 |
 
@@ -330,11 +330,11 @@ sudo systemctl stop courseworks-backend homework slideshow
 从**同一个备份时间点**恢复：
 
 - MySQL 的 `vibeos_agent` 数据库；
-- `accounts-data/`；
-- `homeworks/uploads/`；
-- `slideshow/uploads/`；
-- `courseworks/student-workspace/`；
-- `archive-data/`；
+- `production-data/accounts/`；
+- `production-data/homeworks/uploads/`；
+- `production-data/slideshow/uploads/`；
+- `production-data/courseworks/workspaces/`；
+- `production-data/archives/`；
 - 原环境中仍适用于目标机的 `courseworks/.env` 配置；
 - 原环境的 `superuser.toml`。
 
@@ -342,11 +342,13 @@ sudo systemctl stop courseworks-backend homework slideshow
 
 ```bash
 sudo chown -R "$USER:$(id -gn)" \
-  "$HOME/aes/accounts-data" \
-  "$HOME/aes/homeworks/uploads" \
-  "$HOME/aes/slideshow/uploads" \
-  "$HOME/aes/courseworks/student-workspace" \
-  "$HOME/aes/archive-data"
+  "$HOME/aes/production-data/accounts" \
+  "$HOME/aes/production-data/homeworks" \
+  "$HOME/aes/production-data/slideshow" \
+  "$HOME/aes/production-data/homeworks/uploads" \
+  "$HOME/aes/production-data/slideshow/uploads" \
+  "$HOME/aes/production-data/courseworks/workspaces" \
+  "$HOME/aes/production-data/archives"
 sudo chown "$USER:$(id -gn)" \
   "$HOME/aes/courseworks/.env" \
   "$HOME/aes/superuser.toml"
@@ -359,6 +361,10 @@ sudo ./install_script.sh
 如果目标机路径、数据库密码或网卡名不同，必须先调整恢复后的 `.env`。不要只复制 SQLite 或只导入 MySQL，否则统一账户、班级、作业和课件会不一致。
 
 ## 9. 日常维护
+
+应用数据统一存放于根目录 `production-data/`，运行日志存放于根目录 `logs/`；两个目录均被 Git 忽略。MySQL 原始文件保留在系统路径（默认 `/var/lib/mysql/`），备份时需要单独导出数据库。具体目录、旧版迁移及日志保留规则见 [数据与运行日志](docs/storage-and-logging.md)。
+
+`production-data/` 中的应用数据和备份归安装时指定的服务账户所有，该账户可以访问。MySQL 系统目录仍由 `mysql` 用户持有，不要修改其所有权。
 
 查看日志：
 
@@ -485,7 +491,7 @@ sudo nginx -T | grep -n 'workspace/lab'
 ```bash
 command -v libreoffice pdftoppm
 sudo journalctl -u slideshow -n 200 --no-pager
-test -w "$HOME/aes/slideshow/uploads"
+test -w "$HOME/aes/production-data/slideshow/uploads"
 ```
 
 ### AI 请求超时
@@ -496,9 +502,11 @@ test -w "$HOME/aes/slideshow/uploads"
 
 ```bash
 sudo chown -R "$USER:$(id -gn)" \
-  "$HOME/aes/accounts-data" \
-  "$HOME/aes/homeworks/uploads" \
-  "$HOME/aes/slideshow/uploads" \
-  "$HOME/aes/courseworks/student-workspace" \
-  "$HOME/aes/archive-data"
+  "$HOME/aes/production-data/accounts" \
+  "$HOME/aes/production-data/homeworks" \
+  "$HOME/aes/production-data/slideshow" \
+  "$HOME/aes/production-data/homeworks/uploads" \
+  "$HOME/aes/production-data/slideshow/uploads" \
+  "$HOME/aes/production-data/courseworks/workspaces" \
+  "$HOME/aes/production-data/archives"
 ```

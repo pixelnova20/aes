@@ -5,6 +5,8 @@
  */
 import { Router } from "express";
 import { z } from "zod";
+import { createHash } from "node:crypto";
+import { authEvents } from "../../../infrastructure/logging/audit.js";
 
 import {
   getCurrentAccount,
@@ -98,8 +100,14 @@ router.post("/register", async (request, response, next) => {
 router.post("/login", async (request, response, next) => {
   try {
     const parsed = loginSchema.parse(request.body);
-    response.json(await loginAccount(parsed.email, parsed.password, parsed.accountId));
+    const result = await loginAccount(parsed.email, parsed.password, parsed.accountId);
+    if ("user" in result) {
+      authEvents.write("login_success", { userId: result.user.id, role: result.user.role });
+    }
+    response.json(result);
   } catch (error) {
+    const email = typeof request.body?.email === "string" ? request.body.email.trim().toLowerCase() : "";
+    authEvents.write("login_failure", { accountHash: createHash("sha256").update(email).digest("hex") });
     if (error instanceof z.ZodError) {
       response.status(400).json({ message: error.issues[0]?.message ?? "请求参数无效。" });
       return;
@@ -161,6 +169,7 @@ router.patch("/me", requireAuth, async (request, response, next) => {
 router.post("/logout", requireAuth, async (request, response, next) => {
   try {
     await recordAccountLogout(request.auth!.userId);
+    authEvents.write("logout", { userId: request.auth!.userId, role: request.auth!.role });
     response.status(204).end();
   } catch (error) {
     next(error);

@@ -13,6 +13,7 @@ import {
   sendQemuSessionInput,
   subscribeQemuSession,
   workspaceOwnsInteractiveSession,
+  workspaceLabPresence,
 } from "./qemu-session.service.js";
 
 const MAX_INPUT_BYTES = 64 * 1024;
@@ -32,21 +33,47 @@ export function attachTerminalBridge(server: Server) {
 
   server.on("upgrade", async (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://localhost");
-    if (url.pathname !== "/api/workspace/lab/terminal") return;
+    const presence = url.pathname === "/api/workspace/lab/presence";
+    if (!presence && url.pathname !== "/api/workspace/lab/terminal") return;
 
     try {
       const token = url.searchParams.get("token");
       if (!token) throw new Error("Missing token.");
       const payload = verifyToken(token);
-      if (!["student", "teacher"].includes(payload.role)) throw new Error("Forbidden.");
+      if (!["student", "teacher", "ta"].includes(payload.role)) throw new Error("Forbidden.");
 
       const workspace = await prisma.workspace.findUnique({ where: { userId: payload.sub } });
       const sessionId = url.searchParams.get("sessionId");
-      if (!workspace || !sessionId || !workspaceOwnsInteractiveSession(workspace.id, sessionId)) {
+      if (!workspace || (!presence && (!sessionId || !workspaceOwnsInteractiveSession(workspace.id, sessionId)))) {
         throw new Error("Interactive session not found.");
       }
 
       webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+        let alive = true;
+        webSocket.on("pong", () => { alive = true; });
+        const heartbeat = setInterval(() => {
+          if (!alive) { webSocket.terminate(); return; }
+          alive = false;
+          webSocket.ping();
+        }, 20_000);
+        heartbeat.unref();
+        webSocket.once("close", () => clearInterval(heartbeat));
+        if (presence) {
+          const disconnect = workspaceLabPresence.connect(workspace.id);
+          webSocket.on("close", () => disconnect());
+          webSocket.on("error", () => { disconnect(); webSocket.terminate(); });
+          webSocket.on("message", (raw) => {
+            try {
+              if (JSON.parse(raw.toString()).type === "exit") {
+                disconnect(true);
+                webSocket.close(1000, "Lab exited");
+              }
+            } catch { webSocket.close(1008, "Invalid message"); }
+          });
+          sendJson(webSocket, { type: "connected" });
+          return;
+        }
+        if (!sessionId) { webSocket.close(1008); return; }
         const unsubscribe = subscribeQemuSession(sessionId, (event) => sendJson(webSocket, event));
         sendJson(webSocket, { type: "snapshot", session: getQemuSessionSnapshot(sessionId) });
 

@@ -154,12 +154,13 @@ if [[ "$PURGE_DATA" -eq 1 && "$ASSUME_YES" -eq 0 ]]; then
   [[ "$confirmation" == "DELETE" ]] || die "Uninstallation cancelled."
 fi
 
-services=(courseworks-backend courseworks-network homework slideshow)
+services=(courseworks-backend courseworks-network homework slideshow aes-resource-monitor)
 unit_files=(
   /etc/systemd/system/courseworks-backend.service
   /etc/systemd/system/courseworks-network.service
   /etc/systemd/system/homework.service
   /etc/systemd/system/slideshow.service
+  /etc/systemd/system/aes-resource-monitor.service
 )
 
 log "Stopping and removing AES services"
@@ -167,6 +168,10 @@ for service in "${services[@]}"; do
   run_optional systemctl disable --now "$service"
 done
 run rm -f "${unit_files[@]}"
+run rm -f /etc/logrotate.d/aes
+for service in courseworks-backend homework slideshow; do
+  run rm -f "/etc/systemd/system/$service.service.d/storage-logging.conf"
+done
 run systemctl daemon-reload
 run_optional systemctl reset-failed
 
@@ -222,12 +227,15 @@ if [[ "$PURGE_DATA" -eq 1 ]]; then
     || die "mysql is unavailable; refusing a partial data purge."
   run mysql --protocol=socket -e \
     "DROP DATABASE IF EXISTS vibeos_agent; DROP USER IF EXISTS 'vibeos_user'@'localhost'; FLUSH PRIVILEGES;"
+  run python3 "$ROOT/scripts/release-mysql-storage.py" "$ROOT"
 
   purge_directory_contents "$ROOT/accounts-data"
   purge_directory_contents "$ROOT/homeworks/uploads"
   purge_directory_contents "$ROOT/slideshow/uploads"
   purge_directory_contents "$ROOT/courseworks/student-workspace"
   purge_directory_contents "$ROOT/archive-data"
+  purge_directory_contents "$ROOT/production-data"
+  purge_directory_contents "$ROOT/logs"
   run rm -f "$ENV_FILE"
 fi
 

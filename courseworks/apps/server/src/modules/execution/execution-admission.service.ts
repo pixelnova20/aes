@@ -6,11 +6,13 @@ import { randomUUID } from "node:crypto";
 
 import { config } from "../../config/index.js";
 import type { ContainerRunProfile } from "./container-run-profile.js";
+import { resourceEvent } from "./resource-telemetry.js";
 
 export type ExecutionAdmissionRequest = {
   profiles: ContainerRunProfile[];
   workspaceId?: string;
   interactive?: boolean;
+  signal?: AbortSignal;
 };
 
 export type ExecutionAdmissionLease = {
@@ -33,6 +35,8 @@ type WaitingRequest = {
   resolve: (lease: ExecutionAdmissionLease) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  cleanup: () => void;
+  enqueuedAt: number;
 };
 
 const reservations = new Map<string, Reservation>();
@@ -88,6 +92,7 @@ function parseMemoryBudget() {
 }
 
 function createLease(request: ExecutionAdmissionRequest): ExecutionAdmissionLease {
+  const startedAt = Date.now();
   const lease = { id: randomUUID(), request, release: () => undefined } as ExecutionAdmissionLease;
   const reservation: Reservation = {
     lease,
@@ -98,8 +103,10 @@ function createLease(request: ExecutionAdmissionRequest): ExecutionAdmissionLeas
     heavy: request.profiles.filter((item) => item.heavy).length,
   };
   reservations.set(lease.id, reservation);
+  resourceEvent("admission_acquired", { leaseId: lease.id, workspaceId: request.workspaceId, purposes: request.profiles.map((p) => p.purpose), cpu: reservation.cpu, memoryBytes: reservation.memoryBytes, admission: executionAdmissionSnapshot() });
   lease.release = () => {
     if (!reservations.delete(lease.id)) return;
+    resourceEvent("admission_released", { leaseId: lease.id, workspaceId: request.workspaceId, durationMs: Date.now() - startedAt, admission: executionAdmissionSnapshot() });
     drainQueue();
   };
   return lease;
@@ -115,17 +122,23 @@ function drainQueue() {
     }
     waiting.splice(index, 1);
     clearTimeout(item.timer);
+    item.cleanup();
+    resourceEvent("admission_dequeued", { workspaceId: item.request.workspaceId, waitedMs: Date.now() - item.enqueuedAt });
     item.resolve(createLease(item.request));
   }
 }
 
 /** 交互任务使用此同步接口，资源不足时立即返回 false。 */
 export function tryAcquireExecutionAdmission(request: ExecutionAdmissionRequest) {
-  return canAcquire(request) ? createLease(request) : null;
+  if (request.signal?.aborted) return null;
+  if (canAcquire(request)) return createLease(request);
+  resourceEvent("admission_denied", { workspaceId: request.workspaceId, purposes: request.profiles.map((p) => p.purpose), requestedCpu: request.profiles.reduce((s, p) => s + p.cpus, 0), requestedMemoryBytes: request.profiles.reduce((s, p) => s + p.memoryBytes, 0), admission: executionAdmissionSnapshot() });
+  return null;
 }
 
-/** 短任务使用 FIFO 等待队列，避免多个瞬时编译同时冲击宿主机。 */
+/** 按入队顺序检查短任务，先放行当前预算可容纳的请求。 */
 export function acquireExecutionAdmission(request: ExecutionAdmissionRequest) {
+  if (request.signal?.aborted) return Promise.reject(new Error("aborted"));
   const immediate = tryAcquireExecutionAdmission(request);
   if (immediate) return Promise.resolve(immediate);
   if (request.interactive) return Promise.reject(new Error("Execution resources are temporarily busy; retry the interactive session."));
@@ -134,19 +147,40 @@ export function acquireExecutionAdmission(request: ExecutionAdmissionRequest) {
     item.request = request;
     item.resolve = resolve;
     item.reject = reject;
+    item.enqueuedAt = Date.now();
+    const abort = () => {
+      const index = waiting.indexOf(item);
+      if (index < 0) return;
+      waiting.splice(index, 1);
+      clearTimeout(item.timer);
+      item.cleanup();
+      resourceEvent("admission_cancelled", { workspaceId: request.workspaceId, waitedMs: Date.now() - item.enqueuedAt });
+      reject(new Error("aborted"));
+    };
+    item.cleanup = () => request.signal?.removeEventListener("abort", abort);
     item.timer = setTimeout(() => {
       const index = waiting.indexOf(item);
       if (index >= 0) waiting.splice(index, 1);
+      item.cleanup();
+      resourceEvent("admission_timeout", { workspaceId: request.workspaceId, waitedMs: Date.now() - item.enqueuedAt, admission: executionAdmissionSnapshot() });
       reject(new Error("Execution resources are temporarily busy; retry shortly."));
     }, config.EXECUTION_ADMISSION_QUEUE_TIMEOUT_MS);
     waiting.push(item);
+    request.signal?.addEventListener("abort", abort, { once: true });
+    resourceEvent("admission_queued", { workspaceId: request.workspaceId, waiting: waiting.length });
   });
+}
+
+export function executionAdmissionSnapshot() {
+  const current = totals();
+  return { active: reservations.size, waiting: waiting.length, reservedCpu: current.cpu, reservedMemoryBytes: current.memoryBytes, qemu: current.qemu, cpuBudget: config.EXECUTION_GLOBAL_CPU_BUDGET, memoryBudgetBytes: parseMemoryBudget() };
 }
 
 export const executionAdmissionTestSupport = {
   reset() {
     for (const item of waiting.splice(0)) {
       clearTimeout(item.timer);
+      item.cleanup();
       item.reject(new Error("Admission test reset."));
     }
     reservations.clear();

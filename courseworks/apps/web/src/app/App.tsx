@@ -8,6 +8,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthGate } from "../features/auth/AuthGate";
 import { useAuth } from "../features/auth/auth-context";
 import { AdminPage } from "../features/admin/AdminPage";
+import { SystemMonitorPage } from "../features/admin/SystemMonitorPage";
 import { AuthPage } from "../features/auth/AuthPage";
 import { LabPage } from "../features/lab/LabPage";
 import { WorkspacePage } from "../features/workspace/WorkspacePage";
@@ -47,6 +48,7 @@ export function App() {
   // 前端的页面级路由总表。
   return (
     <Routes>
+      <Route path="/monitor" element={<AuthGate roles={["super_admin"]}><SystemMonitorPage /></AuthGate>} />
       <Route path="/" element={<HomeRedirect />} />
       <Route
         path="/portal"

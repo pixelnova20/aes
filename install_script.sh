@@ -272,18 +272,21 @@ if [[ ! -f "$ENV_FILE" ]]; then
   set_env_value "$temporary_env" SECRET_KEY "$(openssl rand -hex 32)"
   set_env_value "$temporary_env" SLIDESHOW_SESSION_SECRET "$(openssl rand -hex 32)"
   set_env_value "$temporary_env" SUPERUSER_CONFIG_PATH "$ROOT/superuser.toml"
+  set_env_value "$temporary_env" AES_ROOT "$ROOT"
+  set_env_value "$temporary_env" AES_DATA_ROOT "$ROOT/production-data"
+  set_env_value "$temporary_env" AES_LOG_ROOT "$ROOT/logs"
   set_env_value "$temporary_env" BACKEND_HOST "127.0.0.1"
   set_env_value "$temporary_env" BACKEND_PORT "3000"
   set_env_value "$temporary_env" COURSEWORKS_INTERNAL_API_URL "http://127.0.0.1:3000/api"
-  set_env_value "$temporary_env" HOMEWORKS_ACCOUNT_DATABASE_PATH "$ROOT/accounts-data/accounts.db"
-  set_env_value "$temporary_env" HOMEWORKS_COURSE_DATABASE_PATH "$ROOT/accounts-data/courses.db"
-  set_env_value "$temporary_env" HOMEWORKS_UPLOAD_PATH "$ROOT/homeworks/uploads"
+  set_env_value "$temporary_env" HOMEWORKS_ACCOUNT_DATABASE_PATH "$ROOT/production-data/accounts/accounts.db"
+  set_env_value "$temporary_env" HOMEWORKS_COURSE_DATABASE_PATH "$ROOT/production-data/homeworks/courses.db"
+  set_env_value "$temporary_env" HOMEWORKS_UPLOAD_PATH "$ROOT/production-data/homeworks/uploads"
   set_env_value "$temporary_env" HOMEWORKS_PUBLIC_PATH "/homeworks"
-  set_env_value "$temporary_env" SLIDESHOW_DATABASE_PATH "$ROOT/accounts-data/slideshow.db"
-  set_env_value "$temporary_env" SLIDESHOW_UPLOAD_PATH "$ROOT/slideshow/uploads"
+  set_env_value "$temporary_env" SLIDESHOW_DATABASE_PATH "$ROOT/production-data/slideshow/slideshow.db"
+  set_env_value "$temporary_env" SLIDESHOW_UPLOAD_PATH "$ROOT/production-data/slideshow/uploads"
   set_env_value "$temporary_env" SLIDESHOW_PUBLIC_PATH "/slideshow"
-  set_env_value "$temporary_env" ARCHIVE_ROOT "$ROOT/archive-data"
-  set_env_value "$temporary_env" WORKSPACE_ROOT "$ROOT/courseworks/student-workspace"
+  set_env_value "$temporary_env" ARCHIVE_ROOT "$ROOT/production-data/archives"
+  set_env_value "$temporary_env" WORKSPACE_ROOT "$ROOT/production-data/courseworks/workspaces"
   set_env_value "$temporary_env" DOCKER_DIRECT_IFACE "$DEFAULT_IFACE"
   install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 "$temporary_env" "$ENV_FILE"
   rm -f "$temporary_env"
@@ -315,11 +318,11 @@ SQL
 
 log "Preparing persistent data directories and Python environment"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 \
-  "$ROOT/accounts-data" \
-  "$ROOT/homeworks/uploads" \
-  "$ROOT/slideshow/uploads" \
-  "$ROOT/courseworks/student-workspace"
-install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "$ROOT/archive-data"
+  "$ROOT/production-data/accounts" \
+  "$ROOT/production-data/homeworks/uploads" \
+  "$ROOT/production-data/slideshow/uploads" \
+  "$ROOT/production-data/courseworks/workspaces"
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "$ROOT/production-data/archives" "$ROOT/logs"
 
 if [[ ! -x "$VENV/bin/python" ]]; then
   runuser -u "$SERVICE_USER" -- python3 -m venv "$VENV"
@@ -473,6 +476,7 @@ ln -sfn /etc/nginx/sites-available/aes /etc/nginx/sites-enabled/aes
 nginx -t
 
 log "Starting AES services"
+python3 "$ROOT/scripts/configure-runtime.py" --root "$ROOT" --user "$SERVICE_USER"
 systemctl daemon-reload
 systemctl enable courseworks-network courseworks-backend homework slideshow
 systemctl restart courseworks-network

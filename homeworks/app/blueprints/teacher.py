@@ -52,6 +52,7 @@ from ..models import (
     UserClassRole,
 )
 from ..storage import chapter_resource_dir
+from ..question_parser import validate_question_numbers
 
 bp = Blueprint("teacher", __name__, url_prefix="/teacher")
 
@@ -379,6 +380,17 @@ def create_assignment():
         flash("截止时间必须在未来", "error")
         return redirect(url_for("teacher.new_assignment"))
 
+    questions = db_session.query(Question).filter_by(chapter_id=chapter_id).all()
+    question_by_id = {question.id: question for question in questions}
+    if any(qid not in question_by_id for qid in question_ids):
+        flash("所选题目无效，请重新选择", "error")
+        return redirect(url_for("teacher.new_assignment"))
+    try:
+        validate_question_numbers(question_by_id[qid].question_number for qid in question_ids)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("teacher.new_assignment"))
+
     assignment = Assignment(
         title=title,
         course_id=course_id,
@@ -535,6 +547,12 @@ def update_assignment(assignment_id):
                 url_for("teacher.edit_assignment", assignment_id=assignment.id)
             )
 
+        try:
+            validate_question_numbers(question_by_id[qid].question_number for qid in question_ids)
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("teacher.edit_assignment", assignment_id=assignment.id))
+
         assignment.assignment_questions.clear()
         db_session.flush()
         for sort_order, question_id in enumerate(question_ids):
@@ -551,6 +569,13 @@ def update_assignment(assignment_id):
             db_session.add(assignment_question)
             db_session.flush()
             snapshot_question_to_aq(assignment_question, question)
+
+    if has_submissions and is_publish:
+        try:
+            validate_question_numbers(q.question_number for q in assignment.assignment_questions)
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("teacher.edit_assignment", assignment_id=assignment.id))
 
     assignment.title = title
     assignment.description = description or None
@@ -713,6 +738,11 @@ def publish_draft(assignment_id):
         return redirect(
             url_for("teacher.assignment_detail", assignment_id=assignment_id)
         )
+    try:
+        validate_question_numbers(q.question_number for q in assignment.assignment_questions)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("teacher.assignment_detail", assignment_id=assignment.id))
     assignment.status = "published"
     assignment.published_at = datetime.now()
     db_session.commit()

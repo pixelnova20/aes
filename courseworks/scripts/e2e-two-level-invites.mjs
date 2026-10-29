@@ -372,7 +372,7 @@ const classTwoDeletion = await request(`/admin/invite-codes/${classTwo.id}`, {
   token: admin.token,
 });
 assert.equal(classTwoDeletion.deletedUsers, 1);
-assert.match(classTwoDeletion.archiveDirectory, /archive-data/);
+assert.match(classTwoDeletion.archiveDirectory, /production-data\/archives\//);
 const survivingStudent = await request("/auth/login", {
   method: "POST",
   body: JSON.stringify({ email: sharedStudentEmail, password: "student123" }),
@@ -401,7 +401,7 @@ const deletion = await request(`/admin/invite-codes/${parent.id}`, {
   token: admin.token,
 });
 assert.equal(deletion.deletedUsers, 2);
-assert.match(deletion.archiveDirectory, /archive-data/);
+assert.match(deletion.archiveDirectory, /production-data\/archives\//);
 
 const after = await request("/admin/invite-codes", { token: admin.token });
 assert.equal(after.inviteCodes.some((item) => item.code.startsWith(level1Code)), false);

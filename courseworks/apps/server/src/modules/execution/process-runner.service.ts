@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { config } from "../../config/index.js";
+import { removeManagedContainer } from "./container-cleanup.js";
 import { assertWorkspaceExecutionAllowed, assertWorkspaceRoot } from "../workspaces/index.js";
 import { acquireExecutionAdmission } from "./execution-admission.service.js";
 import { getContainerRunProfile, managedContainerLabelArgs, resourceArgs, securityArgs } from "./container-run-profile.js";
@@ -67,8 +68,7 @@ function dockerArgs(containerName: string, workspacePath: string, makeArgs: stri
  * 调用关系：由 `apps/server/src/modules/execution/process-runner.service.ts:runWhitelistedMake()`、`apps/server/src/modules/execution/qemu-session.service.ts:maybeStopWorkspaceRuntime()`、`apps/server/src/modules/execution/qemu-session.service.ts:stopQemuSession()`、`apps/server/src/modules/execution/sandbox-command.service.ts:onAbort()`、`apps/server/src/modules/execution/sandbox-command.service.ts:runSandboxCommand()` 调用；内部调用 `spawn()`、`on()`。
  */
 function forceRemoveContainer(containerName: string) {
-  const child = spawn("docker", ["rm", "-f", containerName], { shell: false, stdio: "ignore" });
-  child.on("error", () => undefined);
+  void removeManagedContainer(containerName, true);
 }
 
 /**
@@ -132,7 +132,7 @@ export async function runWhitelistedMake(workspacePath: string, args: string[], 
       settled = true;
       clearTimeout(timer);
       unregisterManagedContainer(containerName);
-      lease.release();
+      void removeManagedContainer(containerName).then(() => lease.release());
       resolve({ status: "error", exitCode: null, output: error.message });
     });
     child.on("close", (code, signal) => {
@@ -140,7 +140,7 @@ export async function runWhitelistedMake(workspacePath: string, args: string[], 
       settled = true;
       clearTimeout(timer);
       unregisterManagedContainer(containerName);
-      lease.release();
+      void removeManagedContainer(containerName).then(() => lease.release());
       if (resourceLimitReason) resolve({ status: resourceLimitReason === "idle_timeout" ? "idle_timeout" : "resource_limit_exceeded", exitCode: code, output: `${output}\n${resourceLimitMessage(resourceLimitReason)}\n`.slice(-MAX_OUTPUT), limitReason: resourceLimitReason });
       else if (timedOut || signal === "SIGKILL") resolve({ status: "timeout", exitCode: code, output });
       else resolve({ status: code === 0 ? "success" : "failed", exitCode: code, output });

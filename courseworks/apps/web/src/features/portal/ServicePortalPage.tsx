@@ -103,6 +103,11 @@ export function ServicePortalPage() {
         description: "管理一级邀请码、用户账号、归档和系统运行情况。",
         icon: "settings",
         run: () => navigate("/admin"),
+      }, {
+        title: "系统监控",
+        description: "查看用户工作状态、主机资源和实验资源预算。",
+        icon: "screen",
+        run: () => navigate("/monitor"),
       }]
     : [
         {

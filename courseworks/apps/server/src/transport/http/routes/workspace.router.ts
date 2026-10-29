@@ -19,6 +19,7 @@ import {
   exportStudentWorkspace,
   getWorkspaceBuildTarget,
   getWorkspaceLab,
+  openWorkspaceLab,
   getWorkspaceLabVncStatus,
   getWorkspaceStatus,
   getWorkspaceTree,
@@ -516,7 +517,16 @@ router.get("/lab/vnc-status", ...protectedRoute, async (request, response) => {
   }
 });
 
-/** 进入普通 OS Lab 时丢弃旧运行态，并返回一个全新的 Bash 会话。 */
+/** Resume an existing Lab without resetting the student's running shell. */
+router.post("/lab/open", ...protectedRoute, async (request, response) => {
+  try {
+    response.json(await openWorkspaceLab(request.auth!.userId));
+  } catch (error) {
+    response.status(400).json({ message: errorMessage(error, "无法打开操作系统实验环境。") });
+  }
+});
+
+/** Explicit reset remains available, but page entry no longer calls it. */
 router.post("/lab/reset", ...protectedRoute, async (request, response) => {
   try {
     response.json(await resetWorkspaceLab(request.auth!.userId));

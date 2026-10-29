@@ -52,7 +52,6 @@ run npm run deps:check
 run npm run check
 run npm test
 run npm run build
-run mkdir -p student-workspace
 
 if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
   run npm run prisma:bootstrap

@@ -21,10 +21,9 @@ is_forbidden_tracked_path() {
       return
       ;;
     archive-data/*)
-      [[ "$path" != "archive-data/.gitkeep" ]]
-      return
+      return 0
       ;;
-    homeworks/uploads/*|slideshow/uploads/*|courseworks/student-workspace/*|courseworks/logs/*)
+    production-data/*|logs/*|homeworks/uploads/*|slideshow/uploads/*|courseworks/student-workspace/*|courseworks/logs/*)
       return 0
       ;;
     *.db|*.db-*|*.sqlite|*.sqlite3|*.pem|*.key|*.log)
@@ -45,6 +44,9 @@ check_gitignore_rules() {
   local paths=(
     "courseworks/.env"
     "accounts-data/accounts.db"
+    "production-data/courseworks/mysql/ibdata1"
+    "production-data/homeworks/uploads/example.txt"
+    "logs/operations/homeworks.jsonl"
     "accounts-data/accounts.db-wal"
     "archive-data/deleted-user/manifest.json"
     "homeworks/uploads/answers/submission.pdf"
@@ -94,6 +96,8 @@ check_document_locations() {
   done < <(
     find "$ROOT" \
       -path "$ROOT/.git" -prune -o \
+      -path "$ROOT/production-data" -prune -o \
+      -path "$ROOT/logs" -prune -o \
       -path '*/node_modules' -prune -o \
       -path '*/dist' -prune -o \
       -path '*/build' -prune -o \
@@ -111,6 +115,8 @@ check_sensitive_text() {
   local scan_globs=(
     --hidden
     -g '!**/.git/**'
+    -g '!production-data/**'
+    -g '!logs/**'
     -g '!**/node_modules/**'
     -g '!**/dist/**'
     -g '!**/build/**'

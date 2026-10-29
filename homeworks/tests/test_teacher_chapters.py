@@ -344,9 +344,9 @@ class TeacherChapterTest(unittest.TestCase):
             "## 一、选择题\n\n"
             "1. 选择题题干\n\nA. 选项一\nB. 选项二\n\n"
             "## 二、简答题\n\n"
-            "1. 简答题题干\n\n"
+            "2. 简答题题干\n\n"
             "## 三、综合题\n\n"
-            "1. 综合题题干\n\n![结构图](images/diagram.png)\n"
+            "3. 综合题题干\n\n![结构图](images/diagram.png)\n"
         )
         archive_buffer = io.BytesIO()
         with zipfile.ZipFile(archive_buffer, "w") as archive:

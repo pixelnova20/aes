@@ -4,13 +4,13 @@
 
 ## 数据目录
 
-- `accounts-data/accounts.db`：Homeworks 同步的用户、邀请码、班级关系和审计记录；
-- `accounts-data/courses.db`：课程、章节、题库、班级、作业、提交和成绩；
-- `accounts-data/slideshow.db`：课件元数据、班级归属、页面顺序和提取文本；
-- `archive-data/`：删除账号、邀请码或班级前生成的恢复归档；
-- `homeworks/uploads/`：题库附件和学生提交附件；
-- `slideshow/uploads/`：PPT 原件、转换结果和页面图片；
-- `courseworks/student-workspace/`：学生按课程隔离的工作区、会话和评价历史。
+- `production-data/accounts/accounts.db`：Homeworks 同步的用户、邀请码、班级关系和审计记录；
+- `production-data/homeworks/courses.db`：课程、章节、题库、班级、作业、提交和成绩；
+- `production-data/slideshow/slideshow.db`：课件元数据、班级归属、页面顺序和提取文本；
+- `production-data/archives/`：删除账号、邀请码或班级前生成的恢复归档；
+- `production-data/homeworks/uploads/`：题库附件和学生提交附件；
+- `production-data/slideshow/uploads/`：PPT 原件、转换结果和页面图片；
+- `production-data/courseworks/workspaces/`：学生按课程隔离的工作区、会话和评价历史。
 
 Courseworks 的 MySQL 数据库是认证和账户管理的主记录。账户变更会同步到 SQLite，供 Homeworks 和 Slideshow 做 SSO 与业务授权。备份和恢复必须使用同一个时间点的 MySQL、SQLite、上传目录、工作区和 `superuser.toml`。
 

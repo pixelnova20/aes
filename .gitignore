@@ -12,10 +12,11 @@
 *.tsbuildinfo
 
 # Runtime databases and recoverable account archives
+/production-data/
+/logs/
 /accounts-data/*.db*
 /accounts-data/backups/
-/archive-data/*
-!/archive-data/.gitkeep
+/archive-data/
 
 # User uploads, converted slides and Courseworks workspaces
 /homeworks/uploads/

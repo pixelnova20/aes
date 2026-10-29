@@ -38,6 +38,7 @@ import {
 } from "./courseworks-tools.js";
 import { type AgentRunStore, PrismaAgentRunStore } from "../../../agent-runs/index.js";
 import { PiRunEventSink } from "./pi-run-event-sink.js";
+import { RunProgress } from "./run-progress.js";
 import {
   getPiSessionModelConfiguration,
   modelConfigurationChanged,
@@ -45,7 +46,7 @@ import {
   recordPiSessionModelConfiguration,
   type PiModelConfiguration,
 } from "./pi-session-store.js";
-import { stopGraphicalQemuSession } from "../../../execution/index.js";
+import { stopGraphicalQemuSession, resourceEvent } from "../../../execution/index.js";
 
 const PROVIDER_ID = "courseworks-openai-compatible";
 const WORK_TOOL_NAMES = ["read", "bash", "edit", "write"];
@@ -186,6 +187,7 @@ async function createPiSession(input: {
   mode?: "work" | "review";
   systemPrompt?: string;
   readableWorkspaceRoots?: string[];
+  onModelProgress?: () => void;
 }) {
   const {
     sessionManager,
@@ -319,7 +321,9 @@ async function createPiSession(input: {
   session.agent.streamFunction = async (streamModel, context, options) => {
     const timeout = setTimeout(() => {
       llmTimedOut = true;
-      void session.abort();
+      resourceEvent("agent_model_idle_timeout", { runId: input.displaySessionId, idleTimeoutMs: input.llmTimeoutMs });
+      session.abortCompaction();
+      void session.abort().catch(() => undefined);
     }, input.llmTimeoutMs);
     /**
      * 功能：清理请求 `timeout`。
@@ -327,7 +331,12 @@ async function createPiSession(input: {
      * 输出：返回该操作生成、查询或转换后的结果；异步实现以 Promise 交付结果。
      * 调用关系：由 `apps/server/src/modules/coding-agent/adapters/pi/pi-coding-agent-runtime.ts:createPiSession()` 调用；内部调用 `clearTimeout()`。
      */
-    const clearRequestTimeout = () => clearTimeout(timeout);
+    const clearRequestTimeout = () => {
+      clearTimeout(timeout);
+      options?.signal?.removeEventListener("abort", clearRequestTimeout);
+    };
+    options?.signal?.addEventListener("abort", clearRequestTimeout, { once: true });
+    if (options?.signal?.aborted) clearRequestTimeout();
     try {
       const sanitized = sanitizeOutboundContext(
         context,
@@ -359,6 +368,15 @@ async function createPiSession(input: {
             : {}),
         },
       );
+      // Observe the actual stream, including compaction streams that bypass session events.
+      const push = stream.push.bind(stream);
+      stream.push = event => {
+        if (!llmTimedOut && !options?.signal?.aborted && "delta" in event && typeof event.delta === "string" && event.delta.length > 0) {
+          timeout.refresh();
+          input.onModelProgress?.();
+        }
+        push(event);
+      };
       void stream.result().then(clearRequestTimeout, clearRequestTimeout);
       return stream;
     } catch (error) {
@@ -491,10 +509,31 @@ export class PiCodingAgentRuntime implements CodingAgentRuntime {
       throw new Error(`Chat session is already running Agent Run ${existingRunId}.`);
     }
     this.activeSessions.set(sessionId, input.runId);
+    const runStartedAt = Date.now();
+    let runTimedOut = false;
+    const deadlineMs = config.WORKSPACE_AGENT_RUN_TIMEOUT_MS;
+    resourceEvent("agent_run_started", { runId: input.runId, workspaceId: input.workspaceId, userId: input.userId, deadlineMs, idleTimeoutMs: config.AGENT_RUN_IDLE_TIMEOUT_MS, repeatLimit: config.AGENT_RUN_REPEAT_LIMIT, modelIdleTimeoutMs: this.llmTimeoutMs });
+    const deadlineTimer = deadlineMs > 0 ? setTimeout(() => {
+      runTimedOut = true;
+      resourceEvent("agent_run_timeout", { runId: input.runId, workspaceId: input.workspaceId, deadlineMs });
+      stopGraphicalQemuSession(input.runId);
+      this.activeRuns.get(input.runId)?.session.abortCompaction();
+      void this.activeRuns.get(input.runId)?.session.abort().catch(() => undefined);
+    }, deadlineMs) : undefined;
 
     let session: AgentSession | undefined;
     let unsubscribe: (() => void) | undefined;
     let eventSink: PiRunEventSink | undefined;
+    let progressUnsubscribe: (() => void) | undefined;
+    let progressTimer: ReturnType<typeof setInterval> | undefined;
+    let progressStop: string | undefined;
+    let warned = false;
+    let lastProgressLog = Date.now();
+    let latestAssistant: AssistantMessage | undefined;
+    let compactedAfterAssistant = false;
+    let compactionFailure: string | undefined;
+    let recoveryAttempts = 0;
+    const progress = new RunProgress(config.AGENT_RUN_IDLE_TIMEOUT_MS, config.AGENT_RUN_REPEAT_LIMIT, Date.now());
     let quotaExceeded = false;
     /**
      * 功能：处理`did` `llm` `timeout`。
@@ -517,17 +556,55 @@ export class PiCodingAgentRuntime implements CodingAgentRuntime {
         mode: input.mode,
         systemPrompt: input.systemPrompt,
         readableWorkspaceRoots: input.readableWorkspaceRoots,
+        onModelProgress: () => { progress.lastActivity = Date.now(); },
       });
       didLlmTimeout = created.didLlmTimeout;
       session = created.session;
       this.activeRuns.set(input.runId, { sessionId, session });
+      const checkProgress = () => {
+        if (progressStop) return;
+        if (Date.now() - lastProgressLog >= 60000) {
+          lastProgressLog = Date.now();
+          resourceEvent("agent_run_progress", { runId: input.runId, workspaceId: input.workspaceId, durationMs: Date.now() - runStartedAt, idleMs: Date.now() - progress.lastActivity, repeated: progress.repeated });
+        }
+        const reason = progress.reason(Date.now());
+        if (reason) {
+          progressStop = reason;
+          resourceEvent("agent_run_progress_stopped", { runId: input.runId, workspaceId: input.workspaceId, reason, idleMs: Date.now() - progress.lastActivity, repeated: progress.repeated });
+          stopGraphicalQemuSession(input.runId);
+          session?.abortCompaction();
+          void session?.abort().catch(() => undefined);
+        } else if (progress.warning(Date.now()) && !warned) {
+          warned = true;
+          resourceEvent("agent_run_progress_warning", { runId: input.runId, workspaceId: input.workspaceId, repeated: progress.repeated, idleMs: Date.now() - progress.lastActivity });
+          void this.runStore.appendTrace(input.runId, { stepName: "pi:progress_warning", stepStatus: "running", outputSummaryMarkdown: "任务较长时间没有新活动，或正在重复相同工具结果；若持续无进展，系统将停止本轮并保留会话。" }).catch(() => undefined);
+        } else if (!progress.warning(Date.now())) warned = false;
+      };
+      progressUnsubscribe = session.subscribe(event => {
+        if (event.type === "message_end" && event.message.role === "assistant") {
+          latestAssistant = event.message;
+          compactedAfterAssistant = false;
+          compactionFailure = undefined;
+        }
+        if (event.type === "compaction_end") {
+          compactedAfterAssistant = Boolean(event.result && !event.aborted && !event.errorMessage);
+          compactionFailure = event.errorMessage || (event.aborted ? "上下文压缩已取消" : undefined);
+        }
+        progress.observe(event, Date.now());
+        checkProgress();
+      });
+      progressTimer = setInterval(checkProgress, Math.min(1000, config.AGENT_RUN_IDLE_TIMEOUT_MS));
+      if (runTimedOut) throw new Error("Agent Run deadline exceeded.");
       if (this.cancelledRuns.has(input.runId)) {
         throw new Error("Agent Run cancelled before Pi session startup completed.");
       }
       eventSink = new PiRunEventSink(input.runId, this.runStore, async (tokens) => {
         if (!input.onTokenUsage) return;
         quotaExceeded = await input.onTokenUsage(tokens);
-        if (quotaExceeded) await session?.abort();
+        if (quotaExceeded) {
+          session?.abortCompaction();
+          await session?.abort();
+        }
       });
       unsubscribe = eventSink.bind(session);
       created.sessionManager.appendCustomEntry("courseworks.agent-run", {
@@ -575,16 +652,61 @@ export class PiCodingAgentRuntime implements CodingAgentRuntime {
           })),
         } : {}),
       });
+      const assertCanRecover = () => {
+        if (this.cancelledRuns.has(input.runId)) throw new Error("运行已取消。");
+        if (quotaExceeded) throw new Error("今日班级 AI Token 配额已用完。");
+        if (progressStop) throw new Error(progressStop);
+        if (runTimedOut) throw new Error("Agent Run deadline exceeded.");
+        if (created.didLlmTimeout()) throw new Error("模型长时间无新输出。");
+      };
+      // Read the observed terminal message: compaction may remove it from session.messages.
+      while (latestAssistant?.stopReason === "length") {
+        await eventSink.flush();
+        assertCanRecover();
+        if (recoveryAttempts >= config.AGENT_LENGTH_RECOVERY_MAX_ATTEMPTS) {
+          throw new Error(`单次模型输出达到 Token 上限，自动恢复 ${recoveryAttempts} 次后仍未完成。会话和代码已保留，可调整模型后继续。`);
+        }
+        if (compactionFailure) throw new Error(`单次模型输出达到 Token 上限；上下文压缩未成功，未自动继续：${compactionFailure}`);
+        recoveryAttempts++;
+        await this.runStore.updateStatus(input.runId, "planning", "pi:length_recovery");
+        await this.runStore.appendTrace(input.runId, {
+          stepName: "pi:length_recovery", stepStatus: "running",
+          outputSummaryMarkdown: `单次模型输出达到 Token 上限，正在压缩并继续原任务（${recoveryAttempts}/${config.AGENT_LENGTH_RECOVERY_MAX_ATTEMPTS}）。`,
+        });
+        resourceEvent("agent_run_length_recovery", { runId: input.runId, workspaceId: input.workspaceId, attempt: recoveryAttempts, reusedCompaction: compactedAfterAssistant });
+        assertCanRecover();
+        if (!compactedAfterAssistant) {
+          await session.compact("Preserve the original user task, constraints, completed work, file changes, tool results, and remaining steps. Summarize briefly; do not reproduce lengthy internal reasoning.");
+        }
+        await eventSink.flush(); // Include compaction usage in the quota before issuing another request.
+        assertCanRecover();
+        if (!compactedAfterAssistant) throw new Error("上下文压缩未完成，已保留会话，未自动继续。");
+        latestAssistant = undefined;
+        await session.sendCustomMessage({
+          customType: "courseworks.length-recovery",
+          content: "AES automatic continuation: the previous response reached its output-token limit and the conversation has been compacted. Continue the SAME original user task from the summary and current workspace state. Preserve all original constraints. Do not restart completed work or blindly repeat side-effecting commands. Avoid repeating lengthy analysis; perform the next concrete step, verify the result, and provide a concise final answer when done.",
+          display: true,
+          details: { runId: input.runId, attempt: recoveryAttempts, reason: "output_token_limit" },
+        }, { triggerTurn: true });
+        await eventSink.flush();
+        assertCanRecover();
+        if (!latestAssistant) throw new Error("自动继续后模型未返回新的响应，会话已保留。");
+      }
+      if (progressTimer) clearInterval(progressTimer);
+      progressUnsubscribe?.();
+      progressUnsubscribe = undefined;
       await eventSink.flush();
       unsubscribe();
       unsubscribe = undefined;
 
       if (created.didLlmTimeout()) {
         throw new Error(
-          `模型单次响应超过 ${Math.ceil(this.llmTimeoutMs / 1000)} 秒，系统已中止本轮任务。`,
+          `模型连续 ${Math.ceil(this.llmTimeoutMs / 1000)} 秒没有新输出，系统已中止本轮任务。会话和代码已保留，可发送消息继续。`,
         );
       }
 
+      if (progressStop) throw new Error(progressStop);
+      if (runTimedOut) throw new Error("Agent Run deadline exceeded.");
       if (this.cancelledRuns.has(input.runId)) {
         const cancelledAnswer = "运行已取消。";
         await this.runStore.cancel(input.runId, cancelledAnswer);
@@ -595,12 +717,12 @@ export class PiCodingAgentRuntime implements CodingAgentRuntime {
         logLlmResponse(input.email ?? "—", true, cancelledAnswer);
         return cancelledAnswer;
       }
-      const lastAssistant = getLastAssistantMessage(session);
+      const lastAssistant = latestAssistant ?? getLastAssistantMessage(session);
       if (!lastAssistant) {
         throw new Error("模型没有返回 AssistantMessage，本轮任务未完成。");
       }
       if (lastAssistant.stopReason === "length") {
-        throw new Error("模型输出达到自动预算上限，本轮任务未完成。请重试或压缩当前会话。");
+        throw new Error("单次模型输出达到 Token 上限，本轮任务未完成，会话和代码已保留。");
       }
       if (lastAssistant.stopReason === "error") {
         throw new Error(lastAssistant.errorMessage || "模型返回错误，本轮任务未完成。");
@@ -624,10 +746,14 @@ export class PiCodingAgentRuntime implements CodingAgentRuntime {
       logLlmResponse(input.email ?? "—", true, finalAnswer);
       return finalAnswer;
     } catch (error) {
-      const message = quotaExceeded
+      const message = progressStop
+        ? `idle_timeout: ${progressStop === "repeated_tool_results" ? `连续 ${config.AGENT_RUN_REPEAT_LIMIT} 次工具结果重复，疑似循环` : `连续 ${Math.ceil(config.AGENT_RUN_IDLE_TIMEOUT_MS / 1000)} 秒没有新的模型输出或工具完成结果`}。本轮已停止，会话和代码已保留，可发送消息继续。`
+        : runTimedOut
+        ? `Agent Run exceeded its ${Math.ceil(deadlineMs / 1000)} second deadline.`
+        : quotaExceeded
         ? "今日班级 AI Token 配额已用完，本轮 Courseworks 任务已停止。"
         : didLlmTimeout()
-        ? `模型单次响应超过 ${Math.ceil(this.llmTimeoutMs / 1000)} 秒，系统已中止本轮任务。`
+        ? `模型连续 ${Math.ceil(this.llmTimeoutMs / 1000)} 秒没有新输出，系统已中止本轮任务。会话和代码已保留，可发送消息继续。`
         : error instanceof Error ? error.message : "Unknown Pi Agent error";
       unsubscribe?.();
       unsubscribe = undefined;
@@ -666,11 +792,15 @@ export class PiCodingAgentRuntime implements CodingAgentRuntime {
         });
       }
       logLlmResponse(input.email ?? "—", false, message);
-      throw quotaExceeded ? new Error(message) : error;
+      throw quotaExceeded || progressStop || didLlmTimeout() ? new Error(message) : error;
     } finally {
+      if (progressTimer) clearInterval(progressTimer);
+      progressUnsubscribe?.();
+      if (deadlineTimer) clearTimeout(deadlineTimer);
       unsubscribe?.();
       await eventSink?.flush();
       session?.dispose();
+      resourceEvent("agent_run_finished", { runId: input.runId, workspaceId: input.workspaceId, userId: input.userId, durationMs: Date.now() - runStartedAt, deadlineMs, timedOut: runTimedOut, progressStop, modelIdleTimeout: didLlmTimeout(), recoveryAttempts });
       stopGraphicalQemuSession(input.runId);
             this.activeRuns.delete(input.runId);
             this.activeSessions.delete(sessionId);
@@ -689,6 +819,7 @@ export class PiCodingAgentRuntime implements CodingAgentRuntime {
     stopGraphicalQemuSession(runId);
     const active = this.activeRuns.get(runId);
     if (!active) return;
+    active.session.abortCompaction();
     await active.session.abort();
   }
 
